@@ -38,6 +38,7 @@
     --bad-bg: #f8e1e1;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; } /* a hidden block stays hidden even when its own rule sets display */
   body {
     margin: 0; background: var(--cream); color: var(--text);
     font: 15px/1.45 "Noto Sans", system-ui, sans-serif;
@@ -145,8 +146,33 @@
   .thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--sand); cursor: zoom-in; vertical-align: middle; }
   .extra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--sand); border-radius: 6px; background: #fff; }
   .corr { font-size: 12px; color: var(--bronze); margin-top: 3px; }
+  .chip.return { background: var(--bad); color: #fff; }
+  .rc-group-label { font-size: 12px; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; color: var(--earth); }
+  button.rc-waiting { text-align: left; width: 100%; font-size: 16px; }
+  button.rc-waiting .rc-sub { display: block; font-weight: 400; font-size: 13px; opacity: .85; }
+  button.rc-done { opacity: .6; }
+  /* On a phone each receiving line becomes a card: item on top, Sent and
+     Received side by side with labels, damage across the full width. */
+  @media (max-width: 640px) {
+    table.grid.rc { table-layout: auto; border: 0; }
+    table.grid.rc colgroup, table.grid.rc thead { display: none; }
+    table.grid.rc, table.grid.rc tbody { display: block; width: 100%; }
+    table.grid.rc tr { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; border: 1px solid var(--sand); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
+    table.grid.rc tr.group { display: block; border: 0; padding: 8px 2px 2px; background: none; }
+    table.grid.rc tr.group td { background: none; padding: 0; }
+    table.grid.rc td { border: 0; padding: 0; background: none; }
+    table.grid.rc td.c-item, table.grid.rc td.c-size, table.grid.rc td.c-dmg { grid-column: 1 / -1; }
+    table.grid.rc td.c-size { color: #7a6e64; font-size: 13px; margin-top: -4px; }
+    table.grid.rc td.c-sent, table.grid.rc td.c-rec { text-align: left; display: flex; align-items: center; gap: 8px; }
+    table.grid.rc td.c-sent::before, table.grid.rc td.c-rec::before { content: attr(data-label); font-size: 12px; font-weight: 600; color: var(--earth); }
+    table.grid.rc tr.diff { background: #fff6ea; }
+    .rc-damage .dq input { width: 90px; }
+    .rc-damage input[type=text] { font-size: 16px; }
+    .rc-qty { font-size: 16px; }
+  }
   .rc-damage { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
   .rc-damage input[type=text] { min-width: 0; width: 100%; }
+  .rc-damage .dq input[type=text] { width: 80px; }
   tr.diff td { background: #fff6ea; }
   .hint { font-size: 12px; color: #7a6e64; margin-top: 4px; }
   .hint.bad { color: var(--bad); font-weight: 600; }
@@ -226,7 +252,8 @@
           <select id="camp"><option>Loading camps…</option></select>
         </div>
         <div>
-          <button type="button" class="secondary" id="add-page">+ Add a page photo</button>
+          <button type="button" class="secondary" id="add-page" data-camera="1">Take a page photo</button>
+          <button type="button" class="secondary" id="add-page-gallery" data-camera="0">From gallery</button>
           <input type="file" id="file" accept="image/*" multiple>
         </div>
       </div>
@@ -289,7 +316,7 @@
         <span class="muted">Fills every line with what was sent. Then change any line that's short, over or damaged.</span>
       </div>
       <div class="table-wrap">
-        <table class="grid">
+        <table class="grid rc">
           <colgroup><col><col class="c-size"><col class="c-num"><col class="c-num"><col class="c-dmg"></colgroup>
           <thead><tr><th>Item</th><th>Size</th><th class="num">Sent</th><th class="num">Received</th><th>Damaged</th></tr></thead>
           <tbody id="rc-lines"></tbody>
@@ -319,6 +346,9 @@
         <div class="accept-bar">
           <button type="button" id="rc-confirm">Confirm receipt</button>
           <span class="muted" id="rc-summary"></span>
+        </div>
+        <div id="rc-confirm-error"></div>
+        <div>
         </div>
       </div>
     </section>
@@ -514,7 +544,7 @@
       <div><label for="ex-qty">How many</label><input type="text" id="ex-qty" inputmode="decimal" class="rc-qty"></div>
       <div style="flex:1"><label for="ex-note">Note (optional)</label><input type="text" id="ex-note" autocomplete="off" placeholder="e.g. labelled for Sango"></div>
     </div>
-    <div class="field"><button type="button" class="secondary small" id="ex-photo-btn">Add photo</button> <span id="ex-photo"></span></div>
+    <div class="field"><span id="ex-photo-btns"><button type="button" class="secondary small" data-ex-photo="1">Take photo</button> <button type="button" class="secondary small" data-ex-photo="0">From gallery</button></span> <span id="ex-photo"></span></div>
     <div id="extra-error"></div>
     <div class="buttons">
       <button type="button" class="secondary" data-close>Cancel</button>
@@ -800,12 +830,28 @@ $("recent").addEventListener("click", async (ev) => {
 
 // --- Photos ---------------------------------------------------------------
 
-$("add-page").addEventListener("click", () => $("file").click());
+const addPages = async (files) => { for (const f of files) photos.push({ dataUrl: await shrink(f) }); drawPages(); };
+$("add-page").addEventListener("click", () => pickPhoto(true, false, addPages));
+$("add-page-gallery").addEventListener("click", () => pickPhoto(false, true, addPages));
 $("file").addEventListener("change", async (ev) => {
   for (const f of ev.target.files) photos.push({ dataUrl: await shrink(f) });
   ev.target.value = "";
   drawPages();
 });
+
+// Two ways to add a photo (Nicola, 2026-10-06): the camera first, the
+// gallery second. capture="environment" opens a phone's back camera
+// straight away; without it the phone offers its library.
+function pickPhoto(fromCamera, multiple, onFiles) {
+  const input = document.createElement("input");
+  input.type = "file"; input.accept = "image/*";
+  if (fromCamera) input.setAttribute("capture", "environment");
+  if (multiple) input.multiple = true;
+  input.onchange = () => { if (input.files.length) onFiles([...input.files]); };
+  input.click();
+}
+const photoButtons = (attrs, label = "photo") =>
+  `<button type="button" class="secondary small" ${attrs} data-camera="1">Take ${label}</button> <button type="button" class="secondary small" ${attrs} data-camera="0">From gallery</button>`;
 
 // Scales a photo down to MAX_SIDE on its long side and re-encodes it as
 // JPEG — the same place maintenance already resizes photos before upload.
@@ -1656,12 +1702,21 @@ async function loadReceiving() {
   $("rc-error").innerHTML = "";
   try {
     const { load_sheets } = await api("receiving");
-    $("rc-list").innerHTML = load_sheets.map((s) => {
-      const sent = new Date(s.sent_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-      const r = (s.stock_receipts || [])[0];
-      return `<button type="button" class="secondary" data-rc="${s.id}">Load sheet ${s.number} · ${esc(s.locations?.name || "")}
-        <span class="muted"> · sent ${sent} · ${s.load_sheet_lines?.[0]?.count ?? 0} lines · ${s.status === "sent" ? "<b>to receive</b>" : `received ${r?.received_on ? new Date(r.received_on + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""} by ${esc(r?.receiver?.name || "")}`}</span></button>`;
-    }).join("") || `<span class="muted">Nothing sent to your camp yet.</span>`;
+    // Waiting first and bold; already received below, greyed with a tick
+    // (Nicola, 2026-10-06: make it obvious which one still needs doing).
+    const day = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    const waiting = load_sheets.filter((s) => s.status === "sent");
+    const done = load_sheets.filter((s) => s.status !== "sent");
+    $("rc-list").innerHTML =
+      `<div class="rc-group-label">Waiting to be received (${waiting.length})</div>` +
+      (waiting.map((s) => `<button type="button" class="rc-waiting" data-rc="${s.id}">Load sheet ${s.number} · ${esc(s.locations?.name || "")}
+        <span class="rc-sub">sent ${day(s.sent_at)} · ${s.load_sheet_lines?.[0]?.count ?? 0} lines · tap to receive</span></button>`).join("")
+        || `<span class="muted">Nothing waiting.</span>`) +
+      (done.length ? `<div class="rc-group-label" style="margin-top:12px">Already received</div>` + done.map((s) => {
+        const r = (s.stock_receipts || [])[0];
+        return `<button type="button" class="secondary rc-done" data-rc="${s.id}">✓ Load sheet ${s.number} · ${esc(s.locations?.name || "")}
+          <span class="muted"> · received ${r?.received_on ? day(r.received_on + "T12:00:00") : ""} by ${esc(r?.receiver?.name || "")}</span></button>`;
+      }).join("") : "");
   } catch (e) { $("rc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 }
 $("rc-list").addEventListener("click", async (ev) => {
@@ -1680,7 +1735,7 @@ function openReceive(data) {
   $("rc-card").hidden = false;
   $("rc-title").textContent = `Load sheet ${s.number} · ${s.locations?.name || ""} · ${done ? "Received" : "To receive"}`;
   $("rc-meta").textContent = done
-    ? `Received ${data.receipt?.received_on || ""} by ${data.receipt?.receiver?.name || ""}, booked to ${data.receipt?.stock_period ? monthName(data.receipt.stock_period) : ""} stock.${data.receipt?.note ? " Note: " + data.receipt.note : ""}`
+    ? `Received ${data.receipt?.received_on || ""} by ${data.receipt?.receiver?.name || ""}, booked to ${data.receipt?.stock_period ? monthName(data.receipt.stock_period) : ""} stock.${data.receipt?.note ? " Note: " + data.receipt.note : ""} Got a count wrong? Tap Correct on that line.`
     : `Sent ${new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} by ${s.sender?.name || ""}.`;
   $("rc-tools").hidden = done;
   $("rc-finish").hidden = done;
@@ -1693,21 +1748,21 @@ function openReceive(data) {
     const r = l.receipt;
     rows.push(done
       ? `<tr class="${r && Number(r.quantity_received) !== Number(r.quantity_sent) ? "diff" : ""}">
-          <td><b>${esc(it ? it.name : l.description)}</b></td><td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
-          <td class="num">${fmtQty(l.quantity_expected)}</td>
-          <td class="num"><b>${r ? fmtQty(r.quantity_received) : "—"}</b>${r && canCorrect() ? `<div><button type="button" class="secondary small" data-correct="${r.id}">Correct</button></div>` : ""}</td>
-          <td>${r?.damaged ? `<span class="short">${r.damaged_quantity ? fmtQty(r.damaged_quantity) + " damaged" : "Damaged"}</span> ${esc(r.damage_note || "")}${r.damage_photo_url ? `<div><img class="thumb" src="${esc(r.damage_photo_url)}" data-photo-url="${esc(r.damage_photo_url)}" alt="Damage photo"></div>` : ""}` : ""}
+          <td class="c-item"><b>${esc(it ? it.name : l.description)}</b></td><td class="c-size">${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
+          <td class="num c-sent" data-label="Sent">${fmtQty(l.quantity_expected)}</td>
+          <td class="num c-rec" data-label="Received"><b>${r ? fmtQty(r.quantity_received) : "—"}</b>${r && canCorrect() ? `<div><button type="button" class="secondary small" data-correct="${r.id}">Correct</button></div>` : ""}</td>
+          <td class="c-dmg">${r?.damaged ? `<span class="short">${r.damaged_quantity ? fmtQty(r.damaged_quantity) + " damaged" : "Damaged"}</span> ${esc(r.damage_note || "")}${r.damage_photo_url ? `<div><img class="thumb" src="${esc(r.damage_photo_url)}" data-photo-url="${esc(r.damage_photo_url)}" alt="Damage photo"></div>` : ""}` : ""}
             ${(r?.stock_receipt_corrections || []).map((c) => `<div class="corr">Corrected ${fmtQty(c.old_quantity)} → ${fmtQty(c.new_quantity)} by ${esc(c.corrector?.name || "")}: ${esc(c.reason)}</div>`).join("")}</td></tr>`
       : `<tr data-line="${l.id}">
-          <td><b>${esc(it ? it.name : l.description)}</b></td><td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
-          <td class="num">${fmtQty(l.quantity_expected)}</td>
-          <td class="num"><input type="text" inputmode="decimal" class="rc-qty" id="rcq-${l.id}" data-sent="${l.quantity_expected}" placeholder="—" aria-label="Received"></td>
-          <td><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="rcd-${l.id}" data-damage="${l.id}"> Damaged</label>
+          <td class="c-item"><b>${esc(it ? it.name : l.description)}</b></td><td class="c-size">${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
+          <td class="num c-sent" data-label="Sent">${fmtQty(l.quantity_expected)}</td>
+          <td class="num c-rec" data-label="Received"><input type="text" inputmode="decimal" class="rc-qty" id="rcq-${l.id}" data-sent="${l.quantity_expected}" placeholder="—" aria-label="Received"></td>
+          <td class="c-dmg"><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="rcd-${l.id}" data-damage="${l.id}"> Damaged</label>
             <div class="rc-damage" id="rcdx-${l.id}" hidden>
               <span class="muted">List the quantity and describe the damage:</span>
-              <label class="muted" style="font-weight:400">How many are damaged? <input type="text" inputmode="decimal" class="rc-qty" id="rcdq-${l.id}"></label>
+              <label class="muted dq" style="font-weight:400">How many are damaged? <input type="text" inputmode="decimal" class="rc-qty" id="rcdq-${l.id}"></label>
               <input type="text" id="rcn-${l.id}" placeholder="Describe the damage, e.g. tins dented, seal broken" autocomplete="off">
-              <span id="rcp-${l.id}"><button type="button" class="secondary small" data-photo-for="${l.id}">Add photo</button></span>
+              <span id="rcp-${l.id}">${photoButtons(`data-photo-for="${l.id}"`)}</span>
             </div></td></tr>`);
   }
   $("rc-lines").innerHTML = rows.join("");
@@ -1762,15 +1817,8 @@ $("rc-lines").addEventListener("change", (ev) => {
 $("rc-lines").addEventListener("click", (ev) => {
   const ph = ev.target.closest("[data-photo-for]");
   if (ph) {
-    const input = document.createElement("input");
-    input.type = "file"; input.accept = "image/*";
-    input.onchange = async () => {
-      if (!input.files[0]) return;
-      const id = ph.dataset.photoFor;
-      rcPhotos.set(id, await shrink(input.files[0]));
-      drawRcPhoto(id);
-    };
-    input.click();
+    const id = ph.dataset.photoFor;
+    pickPhoto(ph.dataset.camera === "1", false, async (files) => { rcPhotos.set(id, await shrink(files[0])); drawRcPhoto(id); });
   }
   const rm = ev.target.closest("[data-photo-remove]");
   if (rm) { rcPhotos.delete(rm.dataset.photoRemove); drawRcPhoto(rm.dataset.photoRemove); }
@@ -1784,25 +1832,30 @@ $("rc-lines").addEventListener("click", (ev) => {
 function drawRcPhoto(id) {
   const url = rcPhotos.get(id);
   $("rcp-" + id).innerHTML = url
-    ? `<img class="thumb" src="${url}" data-photo-url="${url}" alt="Damage photo"> <button type="button" class="secondary small" data-photo-for="${id}">Replace</button> <button type="button" class="secondary small" data-photo-remove="${id}">Remove</button>`
-    : `<button type="button" class="secondary small" data-photo-for="${id}">Add photo</button>`;
+    ? `<img class="thumb" src="${url}" data-photo-url="${url}" alt="Damage photo"> ${photoButtons(`data-photo-for="${id}"`, "another")} <button type="button" class="secondary small" data-photo-remove="${id}">Remove</button>`
+    : photoButtons(`data-photo-for="${id}"`);
 }
 
+// Problems with a receipt show beside the Confirm button, scrolled into
+// view — on a phone the top of the page is far away (Nicola, 2026-10-06).
+function rcProblem(msg) {
+  $("rc-confirm-error").innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : "";
+  if (msg) $("rc-confirm-error").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+const numText = (v) => String(v ?? "").trim().replace(",", ".");
 $("rc-confirm").addEventListener("click", async () => {
-  $("rc-error").innerHTML = "";
+  rcProblem("");
   const lines = receiving.lines.map((l) => ({
     load_sheet_line_id: l.id,
-    quantity_received: $("rcq-" + l.id).value.trim(),
+    quantity_received: numText($("rcq-" + l.id).value),
     damaged: $("rcd-" + l.id).checked,
     damage_note: $("rcd-" + l.id).checked ? $("rcn-" + l.id).value : null,
-    damaged_quantity: $("rcd-" + l.id).checked ? $("rcdq-" + l.id).value.trim() : null,
+    damaged_quantity: $("rcd-" + l.id).checked ? numText($("rcdq-" + l.id).value) : null,
     damage_photo_data_url: $("rcd-" + l.id).checked ? rcPhotos.get(l.id) || null : null,
   }));
-  if (lines.some((l) => !/^\d+(\.\d+)?$/.test(l.quantity_received))) {
-    $("rc-error").innerHTML = `<div class="error">Every received count must be a number, 0 or more.</div>`; return;
-  }
+  if (lines.some((l) => !/^\d+(\.\d+)?$/.test(l.quantity_received))) return rcProblem("Every received count must be a number, 0 or more.");
   const badDamage = lines.find((l) => l.damaged && (!(Number(l.damaged_quantity) > 0) || !String(l.damage_note || "").trim()));
-  if (badDamage) { $("rc-error").innerHTML = `<div class="error">For each damaged line, say how many are damaged and describe the damage.</div>`; return; }
+  if (badDamage) return rcProblem("For each damaged line, say how many are damaged and describe the damage.");
   if (!confirm("Confirm this receipt? What arrived goes into the camp's stock, and the load sheet locks.")) return;
   $("rc-confirm").disabled = true;
   try {
@@ -1813,7 +1866,8 @@ $("rc-confirm").addEventListener("click", async () => {
     } });
     openReceive(data);
     loadReceiving();
-  } catch (e) { $("rc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; $("rc-confirm").disabled = false; }
+    $("rc-card").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { rcProblem(e.message); $("rc-confirm").disabled = false; }
 });
 
 // --- Not on the load sheet ------------------------------------------------------
@@ -1824,9 +1878,9 @@ function drawExtras() {
   const base = session.person.base_level;
   $("rc-extras").innerHTML = ex.map((e) => {
     const what = e.stock_items ? `${esc(e.stock_items.name)}${e.stock_items.standard_size ? " · " + esc(e.stock_items.standard_size) : ""}` : esc(e.description);
-    const state = e.status === "waiting" ? `<b>waiting for Base</b>`
-      : e.status === "allocated" ? `put into ${esc(e.allocated?.name || "")} stock by ${esc(e.decider?.name || "")}`
-      : `to be returned to Maun — ${esc(e.decider?.name || "")}`;
+    const state = e.status === "waiting" ? `<span class="chip review">Waiting for Base</span>`
+      : e.status === "allocated" ? `<span class="chip matched">Put into ${esc(e.allocated?.name || "")} stock</span> <span class="muted">by ${esc(e.decider?.name || "")}</span>`
+      : `<span class="chip return">To be returned to Maun</span> <span class="muted">— ${esc(e.decider?.name || "")}</span>`;
     return `<div class="extra"><span><b>${fmtQty(e.quantity)} × ${what}</b> <span class="muted">· recorded by ${esc(e.recorder?.name || "")}${e.note ? " · " + esc(e.note) : ""} · ${state}</span>
       ${e.photo_url ? `<div><img class="thumb" src="${esc(e.photo_url)}" data-photo-url="${esc(e.photo_url)}" alt="Photo"></div>` : ""}</span>
       ${base && e.status === "waiting" ? `<span><button type="button" class="secondary small" data-decide="${e.id}">Decide</button></span>` : ""}</div>`;
@@ -1861,15 +1915,13 @@ $("ex-list").addEventListener("click", (ev) => {
   exPick = catalogue.find((i) => i.id === b.dataset.pickItem);
   document.querySelectorAll("#ex-list [data-pick-item]").forEach((x) => x.setAttribute("aria-pressed", x === b));
 });
-$("ex-photo-btn").addEventListener("click", () => {
-  const input = document.createElement("input");
-  input.type = "file"; input.accept = "image/*";
-  input.onchange = async () => {
-    if (!input.files[0]) return;
-    exPhoto = await shrink(input.files[0]);
+$("ex-photo-btns").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-ex-photo]");
+  if (!b) return;
+  pickPhoto(b.dataset.exPhoto === "1", false, async (files) => {
+    exPhoto = await shrink(files[0]);
     $("ex-photo").innerHTML = `<img class="thumb" src="${exPhoto}" data-photo-url="${exPhoto}" alt="Photo"> <button type="button" class="secondary small" id="ex-photo-remove">Remove</button>`;
-  };
-  input.click();
+  });
 });
 $("ex-photo").addEventListener("click", (ev) => {
   if (ev.target.id === "ex-photo-remove") { exPhoto = null; $("ex-photo").innerHTML = ""; }
@@ -1881,7 +1933,7 @@ $("ex-go").addEventListener("click", async () => {
   try {
     openReceive(await api("add_extra", { body: {
       load_sheet_id: receiving.load_sheet.id, stock_item_id: exPick?.id || null,
-      description: $("ex-desc").value, quantity: $("ex-qty").value.trim(), note: $("ex-note").value, photo_data_url: exPhoto,
+      description: $("ex-desc").value, quantity: numText($("ex-qty").value), note: $("ex-note").value, photo_data_url: exPhoto,
     } }));
     closeModals();
   } catch (e) { $("extra-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
@@ -1932,7 +1984,7 @@ function openCorrect(receiptLineId) {
 $("co-go").addEventListener("click", async () => {
   $("correct-error").innerHTML = "";
   try {
-    openReceive(await api("correct_receipt_line", { body: { receipt_line_id: correcting.id, new_quantity: $("co-qty").value.trim(), reason: $("co-reason").value } }));
+    openReceive(await api("correct_receipt_line", { body: { receipt_line_id: correcting.id, new_quantity: numText($("co-qty").value), reason: $("co-reason").value } }));
     closeModals();
   } catch (e) { $("correct-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 });
@@ -1976,6 +2028,7 @@ function setBusy(on) {
   busy = on;
   $("camp").disabled = on;
   $("add-page").disabled = on;
+  $("add-page-gallery").disabled = on;
   $("rematch").disabled = on;
   drawPages();
 }
