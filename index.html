@@ -154,6 +154,15 @@
   button.rc-done { opacity: .6; }
   button.rc-open { text-align: left; width: 100%; border-color: var(--bronze); }
   button.rc-open .rc-sub { display: block; font-weight: 400; font-size: 13px; color: var(--bronze); }
+  .oh-size-under { display: none; }
+  /* On a phone Stock on hand drops the fixed widths: the size moves under
+     the item name, and the columns fit what's in them. */
+  @media (max-width: 640px) {
+    table.grid.oh { table-layout: auto; }
+    table.grid.oh colgroup, table.grid.oh .oh-size { display: none; }
+    table.grid.oh .oh-size-under { display: block; }
+    table.grid.oh .oh-last { white-space: nowrap; font-size: 12px; }
+  }
   /* On a phone each receiving line becomes a card: item on top, Sent and
      Received side by side with labels, damage across the full width. */
   @media (max-width: 640px) {
@@ -383,7 +392,7 @@
       <div class="table-wrap" style="margin-top:12px">
         <table class="grid oh">
           <colgroup><col><col class="c-size"><col class="c-num"><col style="width:130px"></colgroup>
-          <thead><tr><th>Item</th><th>Size</th><th class="mid">On hand</th><th>Last received</th></tr></thead><tbody id="oh-lines"></tbody></table>
+          <thead><tr><th>Item</th><th class="oh-size">Size</th><th class="mid">On hand</th><th class="oh-last">Last received</th></tr></thead><tbody id="oh-lines"></tbody></table>
       </div>
     </section>
 
@@ -2042,9 +2051,10 @@ async function drawOnHand() {
     for (const i of items) {
       const g = `${i.sheet} · ${i.category}`;
       if (g !== group) { rows.push(`<tr class="group"><td colspan="4">${esc(g)}</td></tr>`); group = g; }
-      rows.push(`<tr><td><b>${esc(i.name)}</b>${i.damaged_received ? ` <span class="short">${fmtQty(i.damaged_received)} arrived damaged</span>` : ""}</td>
-        <td>${esc(i.item_type === "variable_weight" ? "kg" : i.standard_size || "")}</td><td class="mid"><b>${fmtQty(i.quantity)}</b></td>
-        <td class="muted">${new Date(i.last_movement).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td></tr>`);
+      const size = i.item_type === "variable_weight" ? "kg" : i.standard_size || "";
+      rows.push(`<tr><td><b>${esc(i.name)}</b><div class="muted oh-size-under">${esc(size)}</div>${i.damaged_received ? `<div class="short">${fmtQty(i.damaged_received)} arrived damaged</div>` : ""}</td>
+        <td class="oh-size">${esc(size)}</td><td class="mid"><b>${fmtQty(i.quantity)}</b></td>
+        <td class="muted oh-last">${new Date(i.last_movement).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td></tr>`);
     }
     $("oh-lines").innerHTML = rows.join("") || `<tr><td colspan="4" class="muted">Nothing received at this camp yet.</td></tr>`;
   } catch (e) { $("oh-lines").innerHTML = `<tr><td colspan="4" class="error">${esc(e.message)}</td></tr>`; }
