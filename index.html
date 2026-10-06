@@ -143,6 +143,7 @@
   table.grid th, table.grid td { border: 1px solid #e3dad2; }
   table.grid th.num, table.grid td.num { text-align: right; }
   table.grid th.mid, table.grid td.mid { text-align: center; }
+  table.grid tfoot td { border-top: 2px solid var(--sand); background: var(--offwhite); }
   table.grid col.c-size { width: 90px; } table.grid col.c-num { width: 100px; } table.grid col.c-dmg { width: 34%; }
   .thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--sand); cursor: zoom-in; vertical-align: middle; }
   .extra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--sand); border-radius: 6px; background: #fff; }
@@ -161,7 +162,8 @@
     table.grid.oh { table-layout: auto; }
     table.grid.oh colgroup, table.grid.oh .oh-size { display: none; }
     table.grid.oh .oh-size-under { display: block; }
-    table.grid.oh .oh-last { white-space: nowrap; font-size: 12px; }
+    table.grid.oh .oh-last { display: none; }
+    table.grid.oh td, table.grid.oh th { padding: 6px 5px; }
   }
   /* On a phone each receiving line becomes a card: item on top, Sent and
      Received side by side with labels, damage across the full width. */
@@ -385,14 +387,18 @@
 
     <section class="card" id="onhand-card">
       <h2>Stock on hand</h2>
-      <p class="muted">What a camp holds now, worked out from every receipt — never a number typed in. Damaged units that arrived are counted, and shown so someone can decide about them.</p>
+      <p class="muted">What a camp holds now and what it's worth, worked out from every receipt — never a number typed in. Damaged units that arrived are counted, and shown so someone can decide about them.</p>
       <div class="row">
         <div><label for="oh-camp">Camp</label><select id="oh-camp"></select></div>
       </div>
       <div class="table-wrap" style="margin-top:12px">
         <table class="grid oh">
-          <colgroup><col><col class="c-size"><col class="c-num"><col style="width:130px"></colgroup>
-          <thead><tr><th>Item</th><th class="oh-size">Size</th><th class="mid">On hand</th><th class="oh-last">Last received</th></tr></thead><tbody id="oh-lines"></tbody></table>
+          <colgroup><col><col class="c-size"><col class="c-num"><col class="c-num"><col style="width:110px"><col style="width:120px"></colgroup>
+          <thead><tr><th>Item</th><th class="oh-size">Size</th><th class="mid">On hand</th><th class="num">Avg cost</th><th class="num">Value</th><th class="oh-last">Last received</th></tr></thead><tbody id="oh-lines"></tbody>
+          <tfoot id="oh-total"></tfoot></table>
+        </div>
+        <p class="muted" style="margin-top:6px">Pula, excluding VAT. Average cost is weighted: every delivery moves it, the way Base values stock today.</p>
+        <div>
       </div>
     </section>
 
@@ -530,6 +536,11 @@
         <label for="rn-size">Pack size</label>
         <input type="text" id="rn-size" autocomplete="off" placeholder="e.g. 5L, 410g, 24's">
         <div class="hint" id="rn-size-hint">If the size is in the name, move it here.</div>
+      </div>
+      <div class="field">
+        <label for="rn-vat">VAT</label>
+        <select id="rn-vat"><option value="14">14% — standard</option><option value="0">0% — zero-rated (BURS foodstuffs list)</option></select>
+        <div class="hint">Used to value stock excluding VAT.</div>
       </div>
     </div>
     <div class="field">
@@ -1035,9 +1046,14 @@ function drawLines() {
     const item = l.stock_items;
     const c = l.match_confidence || {};
     const confText = ["sheet", "category", "item"].filter((k) => c[k] != null).map((k) => `${k} ${Math.round(c[k] * 100)}%`).join(" · ");
-    const qty = l.handwritten_qty != null && l.handwritten_qty !== l.printed_qty
+    const counted = l.handwritten_qty != null && l.handwritten_qty !== l.printed_qty
       ? `${l.printed_qty ?? "—"} <span class="hand" title="Written by hand on the invoice">✎ ${l.handwritten_qty}</span>`
       : (l.printed_qty ?? "—");
+    // In single units (D-018): a case of 6 counts as 6.
+    const upp = Number(l.units_per_pack || 1);
+    const units = Number(l.handwritten_qty ?? l.printed_qty ?? 0) * upp;
+    const qty = (upp > 1 ? `${counted} × ${upp}<div class="adj">= ${fmtQty(units)} units</div>` : counted)
+      + (!locked() && !l.reviewed_at ? `<div><button type="button" class="secondary small" data-line="${l.id}" data-decision="units">${upp > 1 ? "Change units" : "Units per pack"}</button></div>` : "");
     const unit = l.unit_price_excl != null ? `${money(l.unit_price_excl)} <span class="muted">excl</span>` : l.unit_price_incl != null ? `${money(l.unit_price_incl)} <span class="muted">incl</span>` : "—";
     const changed = l.reviewed_at && l.proposed_stock_item_id && l.proposed_stock_item_id !== l.matched_stock_item_id;
     return `<tr class="${isOpen(l) ? "open" : ""}">
@@ -1100,6 +1116,13 @@ $("lines").addEventListener("click", async (ev) => {
   clearError();
   if (decision === "choose") return openChoose(line);
   if (decision === "reallocate") return openRealloc(line);
+  if (decision === "units") {
+    const v = prompt(`How many single units are in one of these?\n${line.raw_description}${line.raw_size ? " (" + line.raw_size + ")" : ""}\nA case of 6 is 6; a single item is 1.`, String(line.units_per_pack || 1));
+    if (v == null) return;
+    try { render(await api("review_line", { body: { line_id: line.id, decision: "units", units_per_pack: v.trim() } })); }
+    catch (e) { showError(e); }
+    return;
+  }
   if (decision === "create") return openCreate(line);
   b.disabled = true;
   try {
@@ -1348,6 +1371,7 @@ async function openRename(id, editing) {
   $("rename-error").innerHTML = "";
   $("rn-name").value = renaming.name;
   $("rn-size").value = renaming.standard_size || "";
+  $("rn-vat").value = String(renaming.vat_rate ?? 14);
   checkRename();
   $("rn-history").textContent = "Loading…";
   openModal("rename-modal");
@@ -1364,6 +1388,7 @@ function drawHistory({ history, confirmed_lines }) {
         if (h.what === "merged in") return `<div>“${esc(h.from)}” merged into this item ${by}</div>`;
         if (h.what === "deleted") return `<div>Deleted: ${esc(h.to)} ${by}</div>`;
         if (h.what === "restored") return `<div>Restored ${by}</div>`;
+        if (h.what === "VAT rate") return `<div>VAT: ${esc(h.from)} → ${esc(h.to)} ${by}</div>`;
         return `<div>${h.what === "name" ? "Name" : "Pack size"}: “${esc(h.from ?? "none")}” → “${esc(h.to ?? "none")}” ${by}</div>`;
       }).join("")
     : "Never changed.")
@@ -1372,18 +1397,20 @@ function drawHistory({ history, confirmed_lines }) {
 function checkRename() {
   const name = $("rn-name").value.trim();
   const size = $("rn-size").value.trim();
-  const unchanged = name === renaming?.name && size === (renaming?.standard_size || "");
+  const unchanged = name === renaming?.name && size === (renaming?.standard_size || "") && $("rn-vat").value === String(renaming?.vat_rate ?? 14);
   $("rn-go").disabled = !nameFeedback(name, "rn-hint") || unchanged;
 }
 $("rn-name").addEventListener("input", checkRename);
 $("rn-size").addEventListener("input", checkRename);
+$("rn-vat").addEventListener("change", checkRename);
 $("rn-go").addEventListener("click", async () => {
   $("rename-error").innerHTML = "";
   $("rn-go").disabled = true;
   try {
-    const data = await api("edit_item", { body: { stock_item_id: renaming.id, name: $("rn-name").value.trim(), standard_size: $("rn-size").value.trim() } });
+    const data = await api("edit_item", { body: { stock_item_id: renaming.id, name: $("rn-name").value.trim(), standard_size: $("rn-size").value.trim(), vat_rate: Number($("rn-vat").value) } });
     renaming.name = data.item.name;          // the cached catalogue row, so the list shows it at once
     renaming.standard_size = data.item.standard_size;
+    renaming.vat_rate = data.item.vat_rate;
     $("rename-item").innerHTML = `${esc(renaming.name)}${renaming.standard_size ? " · " + esc(renaming.standard_size) : ""} · ${esc(renaming.sheet)} / ${esc(renaming.category)}`;
     drawHistory(data);
     drawStockList();
@@ -1596,7 +1623,8 @@ const sourceText = (l) => (l.load_sheet_line_sources || []).map((s) => {
   const il = s.invoice_lines || {};
   const q = il.handwritten_qty ?? il.printed_qty;
   const gap = supplierGap(il);
-  return `${esc(il.invoices?.supplier || "")} ${esc(il.invoices?.invoice_number || "")}: ${fmtQty(q ?? 0)}${il.handwritten_qty != null ? " ✎" : ""}`
+  const upp = Number(il.units_per_pack || 1);
+  return `${esc(il.invoices?.supplier || "")} ${esc(il.invoices?.invoice_number || "")}: ${fmtQty(q ?? 0)}${il.handwritten_qty != null ? " ✎" : ""}${upp > 1 ? ` × ${upp} = ${fmtQty((q ?? 0) * upp)}` : ""}`
     + (gap < 0 ? ` <span class="short">supplier short ${fmtQty(-gap)} (invoiced ${fmtQty(il.printed_qty)})</span>` : "")
     + (gap > 0 ? ` <span class="short">supplier over ${fmtQty(gap)} (invoiced ${fmtQty(il.printed_qty)})</span>` : "");
 }).join("<br>");
@@ -2045,18 +2073,22 @@ function fillOnHandCamps() {
 async function drawOnHand() {
   $("oh-lines").innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
   try {
-    const { items } = await api("stock_on_hand", { query: `&location_id=${$("oh-camp").value}` });
+    const { items, total_value_excl, uncosted_items } = await api("stock_on_hand", { query: `&location_id=${$("oh-camp").value}` });
+    $("oh-total").innerHTML = items.length
+      ? `<tr><td colspan="4"><b>Total value of stock</b>${uncosted_items ? `<div class="muted">${uncosted_items} item${uncosted_items > 1 ? "s" : ""} with no cost yet, not included</div>` : ""}</td><td class="num"><b>P ${money(total_value_excl)}</b></td><td class="oh-last"></td></tr>` : "";
     let group = null;
     const rows = [];
     for (const i of items) {
       const g = `${i.sheet} · ${i.category}`;
-      if (g !== group) { rows.push(`<tr class="group"><td colspan="4">${esc(g)}</td></tr>`); group = g; }
+      if (g !== group) { rows.push(`<tr class="group"><td colspan="6">${esc(g)}</td></tr>`); group = g; }
       const size = i.item_type === "variable_weight" ? "kg" : i.standard_size || "";
       rows.push(`<tr><td><b>${esc(i.name)}</b><div class="muted oh-size-under">${esc(size)}</div>${i.damaged_received ? `<div class="short">${fmtQty(i.damaged_received)} arrived damaged</div>` : ""}</td>
         <td class="oh-size">${esc(size)}</td><td class="mid"><b>${fmtQty(i.quantity)}</b></td>
+        <td class="num">${i.avg_cost_excl == null ? `<span class="muted" title="No invoice cost behind this stock yet">—</span>` : money(i.avg_cost_excl)}</td>
+        <td class="num">${i.value_excl == null ? "—" : money(i.value_excl)}</td>
         <td class="muted oh-last">${new Date(i.last_movement).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td></tr>`);
     }
-    $("oh-lines").innerHTML = rows.join("") || `<tr><td colspan="4" class="muted">Nothing received at this camp yet.</td></tr>`;
+    $("oh-lines").innerHTML = rows.join("") || `<tr><td colspan="6" class="muted">Nothing received at this camp yet.</td></tr>`;
   } catch (e) { $("oh-lines").innerHTML = `<tr><td colspan="4" class="error">${esc(e.message)}</td></tr>`; }
 }
 $("oh-camp").addEventListener("change", drawOnHand);
