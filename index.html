@@ -142,6 +142,7 @@
   table.grid { border: 1px solid var(--sand); table-layout: fixed; }
   table.grid th, table.grid td { border: 1px solid #e3dad2; }
   table.grid th.num, table.grid td.num { text-align: right; }
+  table.grid th.mid, table.grid td.mid { text-align: center; }
   table.grid col.c-size { width: 90px; } table.grid col.c-num { width: 100px; } table.grid col.c-dmg { width: 34%; }
   .thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--sand); cursor: zoom-in; vertical-align: middle; }
   .extra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--sand); border-radius: 6px; background: #fff; }
@@ -151,6 +152,8 @@
   button.rc-waiting { text-align: left; width: 100%; font-size: 16px; }
   button.rc-waiting .rc-sub { display: block; font-weight: 400; font-size: 13px; opacity: .85; }
   button.rc-done { opacity: .6; }
+  button.rc-open { text-align: left; width: 100%; border-color: var(--bronze); }
+  button.rc-open .rc-sub { display: block; font-weight: 400; font-size: 13px; color: var(--bronze); }
   /* On a phone each receiving line becomes a card: item on top, Sent and
      Received side by side with labels, damage across the full width. */
   @media (max-width: 640px) {
@@ -303,6 +306,7 @@
    <div id="view-receive" hidden>
     <section class="card">
       <h2>Deliveries to receive</h2>
+      <div id="rc-notice"></div>
       <p class="muted">Load sheets sent to your camp. Open one as the truck is unloaded (or the next morning), tap <b>Receive all</b>, then correct only what's different. Confirming puts what actually arrived into the camp's stock.</p>
       <div class="recent-list" id="rc-list"><span class="muted">Loading…</span></div>
       <div id="rc-error"></div>
@@ -328,6 +332,8 @@
         <div class="creator-list" id="rc-extras"></div>
         <button type="button" class="secondary" id="rc-add-extra" style="margin-top:8px">+ Add an item not on the load sheet</button>
       </div>
+      <div id="rc-done-bar" class="accept-bar" hidden></div>
+      <div id="rc-done-error"></div>
       <div id="rc-finish">
         <div class="row" style="margin-top:16px">
           <div>
@@ -375,7 +381,9 @@
         <div><label for="oh-camp">Camp</label><select id="oh-camp"></select></div>
       </div>
       <div class="table-wrap" style="margin-top:12px">
-        <table><thead><tr><th>Item</th><th>Size</th><th class="num">On hand</th><th>Last received</th></tr></thead><tbody id="oh-lines"></tbody></table>
+        <table class="grid oh">
+          <colgroup><col><col class="c-size"><col class="c-num"><col style="width:130px"></colgroup>
+          <thead><tr><th>Item</th><th>Size</th><th class="mid">On hand</th><th>Last received</th></tr></thead><tbody id="oh-lines"></tbody></table>
       </div>
     </section>
 
@@ -1706,13 +1714,19 @@ async function loadReceiving() {
     // (Nicola, 2026-10-06: make it obvious which one still needs doing).
     const day = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
     const waiting = load_sheets.filter((s) => s.status === "sent");
-    const done = load_sheets.filter((s) => s.status !== "sent");
+    const open = load_sheets.filter((s) => s.status !== "sent" && !(s.stock_receipts || [])[0]?.completed_at);
+    const done = load_sheets.filter((s) => s.status !== "sent" && (s.stock_receipts || [])[0]?.completed_at);
     $("rc-list").innerHTML =
       `<div class="rc-group-label">Waiting to be received (${waiting.length})</div>` +
       (waiting.map((s) => `<button type="button" class="rc-waiting" data-rc="${s.id}">Load sheet ${s.number} · ${esc(s.locations?.name || "")}
         <span class="rc-sub">sent ${day(s.sent_at)} · ${s.load_sheet_lines?.[0]?.count ?? 0} lines · tap to receive</span></button>`).join("")
         || `<span class="muted">Nothing waiting.</span>`) +
-      (done.length ? `<div class="rc-group-label" style="margin-top:12px">Already received</div>` + done.map((s) => {
+      (open.length ? `<div class="rc-group-label" style="margin-top:12px">Received — still open (${open.length})</div>` + open.map((s) => {
+        const r = (s.stock_receipts || [])[0];
+        return `<button type="button" class="secondary rc-open" data-rc="${s.id}">Load sheet ${s.number} · ${esc(s.locations?.name || "")}
+          <span class="rc-sub">received ${r?.received_on ? day(r.received_on + "T12:00:00") : ""} by ${esc(r?.receiver?.name || "")} · check, correct, then tap Finish</span></button>`;
+      }).join("") : "") +
+      (done.length ? `<div class="rc-group-label" style="margin-top:12px">Complete</div>` + done.map((s) => {
         const r = (s.stock_receipts || [])[0];
         return `<button type="button" class="secondary rc-done" data-rc="${s.id}">✓ Load sheet ${s.number} · ${esc(s.locations?.name || "")}
           <span class="muted"> · received ${r?.received_on ? day(r.received_on + "T12:00:00") : ""} by ${esc(r?.receiver?.name || "")}</span></button>`;
@@ -1722,6 +1736,7 @@ async function loadReceiving() {
 $("rc-list").addEventListener("click", async (ev) => {
   const b = ev.target.closest("[data-rc]");
   if (!b) return;
+  $("rc-notice").innerHTML = "";
   try { openReceive(await api("load_sheet", { query: `&id=${b.dataset.rc}` })); $("rc-card").scrollIntoView({ behavior: "smooth" }); }
   catch (e) { $("rc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 });
@@ -1739,6 +1754,12 @@ function openReceive(data) {
     : `Sent ${new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} by ${s.sender?.name || ""}.`;
   $("rc-tools").hidden = done;
   $("rc-finish").hidden = done;
+  const completed = !!data.receipt?.completed_at;
+  $("rc-done-bar").hidden = !done;
+  $("rc-done-bar").innerHTML = !done ? "" : completed
+    ? `<span class="chip matched" style="font-size:14px;padding:4px 12px">Complete ✓</span><span class="muted">Finished by ${esc(data.receipt.completer?.name || "")}, ${new Date(data.receipt.completed_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}. ${session.person.base_level ? "As Base you can still correct it." : "Only Base can change it now."}</span>`
+    : `<button type="button" class="primary" id="rc-complete">Finish — nothing more to change</button><span class="muted">Tap when everything is checked and corrected. It goes to Complete, and only Base can change it after.</span>`;
+  $("rc-add-extra").hidden = completed && !session.person.base_level;
   let group = null;
   const rows = [];
   for (const l of data.lines) {
@@ -1839,8 +1860,10 @@ function drawRcPhoto(id) {
 // Problems with a receipt show beside the Confirm button, scrolled into
 // view — on a phone the top of the page is far away (Nicola, 2026-10-06).
 function rcProblem(msg) {
-  $("rc-confirm-error").innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : "";
-  if (msg) $("rc-confirm-error").scrollIntoView({ behavior: "smooth", block: "center" });
+  const box = $("rc-finish").hidden ? $("rc-done-error") : $("rc-confirm-error");
+  $("rc-confirm-error").innerHTML = ""; $("rc-done-error").innerHTML = "";
+  box.innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : "";
+  if (msg) box.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 const numText = (v) => String(v ?? "").trim().replace(",", ".");
 $("rc-confirm").addEventListener("click", async () => {
@@ -1970,8 +1993,22 @@ $("dc-return").addEventListener("click", () => decide("return"));
 // --- Corrections after confirming -----------------------------------------------
 
 function canCorrect() {
-  return !!receiving && receiving.load_sheet.status === "received";
+  return !!receiving && receiving.load_sheet.status === "received" && (!receiving.receipt?.completed_at || session.person.base_level);
 }
+// Finish (D-017): the end of camp's work on a delivery — back to the list.
+$("rc-done-bar").addEventListener("click", async (ev) => {
+  if (ev.target.id !== "rc-complete") return;
+  if (!confirm("Finish this delivery? Everything is checked and corrected; after this only Base can change it.")) return;
+  ev.target.disabled = true;
+  try {
+    const data = await api("complete_receipt", { body: { load_sheet_id: receiving.load_sheet.id } });
+    receiving = null;
+    $("rc-card").hidden = true;
+    await loadReceiving();
+    $("rc-notice").innerHTML = `<div class="notice">Load sheet ${data.load_sheet.number} · ${esc(data.load_sheet.locations?.name || "")} is complete.</div>`;
+    $("view-receive").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { rcProblem(e.message); ev.target.disabled = false; }
+});
 let correcting = null;
 function openCorrect(receiptLineId) {
   const line = receiving.lines.find((l) => l.receipt?.id === receiptLineId);
@@ -2006,7 +2043,7 @@ async function drawOnHand() {
       const g = `${i.sheet} · ${i.category}`;
       if (g !== group) { rows.push(`<tr class="group"><td colspan="4">${esc(g)}</td></tr>`); group = g; }
       rows.push(`<tr><td><b>${esc(i.name)}</b>${i.damaged_received ? ` <span class="short">${fmtQty(i.damaged_received)} arrived damaged</span>` : ""}</td>
-        <td>${esc(i.item_type === "variable_weight" ? "kg" : i.standard_size || "")}</td><td class="num"><b>${fmtQty(i.quantity)}</b></td>
+        <td>${esc(i.item_type === "variable_weight" ? "kg" : i.standard_size || "")}</td><td class="mid"><b>${fmtQty(i.quantity)}</b></td>
         <td class="muted">${new Date(i.last_movement).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td></tr>`);
     }
     $("oh-lines").innerHTML = rows.join("") || `<tr><td colspan="4" class="muted">Nothing received at this camp yet.</td></tr>`;
