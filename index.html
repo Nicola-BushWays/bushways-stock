@@ -1,0 +1,2024 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Read an Invoice</title>
+<!--
+  camp-stock: photograph an invoice, read it, match every line to the
+  stock list, then a person decides each line and accepts the invoice.
+  One press of Read invoice reads and matches (read_invoice, then
+  match_invoice, on the camp-stock Edge Function); the review actions
+  are review_line, create_item and accept_invoice.
+  See tools/camp-stock/docs/modules/read-invoice-page.md.
+
+  Local-first (root D-006): open this file straight from disk in a
+  browser. Sign-in uses the same person and PIN as maintenance (D-011).
+
+  Nothing on this page changes stock. Accepting an invoice is what a
+  load sheet will be built from; stock moves only when a delivery is
+  received.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --forest: #122d31;
+    --earth: #473325;
+    --bronze: #a57452;
+    --sand: #b7aa9f;
+    --cream: #f9f4f0;
+    --offwhite: #f2f2f2;
+    --text: #333333;
+    --ok: #2f6b3a;
+    --ok-bg: #e5f0e4;
+    --warn: #8a5a12;
+    --warn-bg: #fbeed5;
+    --bad: #9b2c2c;
+    --bad-bg: #f8e1e1;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--cream); color: var(--text);
+    font: 15px/1.45 "Noto Sans", system-ui, sans-serif;
+  }
+  header { background: var(--forest); color: #fff; padding: 18px 16px; }
+  header h1 { margin: 0; font-weight: 900; font-size: 22px; letter-spacing: .01em; }
+  header p { margin: 4px 0 0; color: var(--sand); font-size: 13px; }
+  main { max-width: 1240px; margin: 0 auto; padding: 16px; }
+  .card { background: #fff; border-radius: 8px; box-shadow: 0 2px 15px #cdcdcd; padding: 16px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 12px; font-size: 16px; font-weight: 900; color: var(--forest); }
+  label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; color: var(--earth); }
+  select, input[type=text], input[type=password], input[type=search] {
+    font: inherit; padding: 9px 10px; border: 1px solid var(--sand); border-radius: 6px; background: #fff; min-width: 220px; max-width: 100%;
+  }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+  .signed-in { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+  .signed-in .who { font-weight: 600; color: var(--forest); }
+
+  /* Every action, navigation included, is a real padded button (root CLAUDE.md). */
+  button {
+    font: inherit; font-weight: 600; cursor: pointer; border-radius: 6px;
+    padding: 10px 18px; border: 2px solid var(--forest);
+    background: var(--forest); color: #fff; transition: background .3s, border-color .3s;
+  }
+  button:hover:not(:disabled) { background: var(--bronze); border-color: var(--bronze); }
+  button.secondary { background: #fff; color: var(--forest); }
+  button.secondary:hover:not(:disabled) { color: #fff; }
+  button.small { padding: 5px 10px; font-size: 13px; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { font-size: 17px; padding: 13px 28px; }
+
+  .pages { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+  .page { width: 120px; text-align: center; font-size: 12px; }
+  .page img { width: 120px; height: 160px; object-fit: cover; border-radius: 6px; border: 1px solid var(--sand); display: block; margin-bottom: 6px; cursor: zoom-in; }
+  input[type=file] { display: none; }
+
+  .status { margin-top: 12px; font-weight: 600; color: var(--earth); display: flex; align-items: center; gap: 10px; min-height: 24px; }
+  .spinner { width: 18px; height: 18px; border: 3px solid var(--sand); border-top-color: var(--forest); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error { color: var(--bad); background: var(--bad-bg); padding: 10px 12px; border-radius: 6px; margin-top: 12px; white-space: pre-wrap; }
+  .notice { color: var(--ok); background: var(--ok-bg); padding: 10px 12px; border-radius: 6px; margin-top: 12px; }
+
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+  .tile { background: var(--offwhite); border-radius: 6px; padding: 10px 12px; }
+  .tile .k { font-size: 12px; color: var(--earth); }
+  .tile .v { font-size: 17px; font-weight: 900; color: var(--forest); word-break: break-word; }
+  .tile.ok { background: var(--ok-bg); } .tile.ok .v { color: var(--ok); }
+  .tile.warn { background: var(--warn-bg); } .tile.warn .v { color: var(--warn); }
+  .tile.bad { background: var(--bad-bg); } .tile.bad .v { color: var(--bad); }
+
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 12px; }
+  .filters button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-weight: 600; color: var(--earth); border-bottom: 2px solid var(--sand); padding: 8px 6px; white-space: nowrap; }
+  td { border-bottom: 1px solid #e6e0da; padding: 8px 6px; vertical-align: top; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  tr.open td { background: #fffaf1; }
+  .desc { font-weight: 600; }
+  .muted { color: #7a6e64; font-size: 12px; }
+  .hand { background: var(--warn-bg); color: var(--warn); border-radius: 4px; padding: 1px 5px; font-weight: 600; white-space: nowrap; }
+  .chip { display: inline-block; border-radius: 10px; padding: 2px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .chip.matched { background: var(--ok-bg); color: var(--ok); }
+  .chip.confirmed { background: var(--forest); color: #fff; }
+  .chip.review { background: var(--warn-bg); color: var(--warn); }
+  .chip.notstock { background: var(--offwhite); color: var(--earth); }
+  .dest { display: inline-block; margin-top: 4px; background: #e8eef5; color: #1f3a5c; border-radius: 4px; padding: 1px 6px; font-size: 12px; font-weight: 600; }
+  .match-name { font-weight: 600; color: var(--forest); }
+  .reason { color: var(--warn); font-size: 12px; margin-top: 3px; }
+  .conf { font-size: 11px; color: #7a6e64; }
+  .tol { font-size: 12px; color: var(--bronze); font-weight: 600; margin-top: 2px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+  .accept-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 2px solid var(--sand); }
+
+  .recent-list, .creator-list { display: flex; flex-direction: column; gap: 8px; }
+  .recent-list button { text-align: left; width: 100%; }
+  .creator { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; background: var(--offwhite); border-radius: 6px; }
+
+  .viewer { position: fixed; inset: 0; background: rgba(18,45,49,.9); display: none; overflow: auto; z-index: 20; cursor: zoom-out; }
+  .viewer.open { display: block; }
+  .viewer img { display: block; max-width: 100%; margin: 0 auto; }
+  .viewer.full img { max-width: none; }
+  .viewer .close { position: fixed; top: 12px; right: 16px; z-index: 21; }
+
+  .modal-back { position: fixed; inset: 0; background: rgba(18,45,49,.6); display: none; z-index: 10; overflow: auto; padding: 24px 16px; }
+  .modal-back.open { display: block; }
+  .modal { background: #fff; border-radius: 8px; max-width: 620px; margin: 0 auto; padding: 18px; }
+  .modal h3 { margin: 0 0 4px; color: var(--forest); font-weight: 900; }
+  .modal .field { margin-top: 12px; }
+  .modal .field input, .modal .field select { width: 100%; }
+  .modal .buttons { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+  .pick-list { max-height: 50vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .pick-list button { text-align: left; }
+  .pick-list button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
+  .note-box { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); font-size: 14px; }
+  .suggest { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+  .short { color: var(--bad); font-weight: 600; }
+  .rc-qty { width: 80px; min-width: 0 !important; text-align: right; }
+  table.grid { border: 1px solid var(--sand); table-layout: fixed; }
+  table.grid th, table.grid td { border: 1px solid #e3dad2; }
+  table.grid th.num, table.grid td.num { text-align: right; }
+  table.grid col.c-size { width: 90px; } table.grid col.c-num { width: 100px; } table.grid col.c-dmg { width: 34%; }
+  .thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--sand); cursor: zoom-in; vertical-align: middle; }
+  .extra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--sand); border-radius: 6px; background: #fff; }
+  .corr { font-size: 12px; color: var(--bronze); margin-top: 3px; }
+  .rc-damage { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .rc-damage input[type=text] { min-width: 0; width: 100%; }
+  tr.diff td { background: #fff6ea; }
+  .hint { font-size: 12px; color: #7a6e64; margin-top: 4px; }
+  .hint.bad { color: var(--bad); font-weight: 600; }
+
+  .views { display: flex; gap: 6px; }
+  .views button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
+  tr.group td { background: var(--offwhite); font-weight: 900; color: var(--forest); font-size: 12px; letter-spacing: .03em; }
+  .adj { color: var(--bronze); font-size: 12px; font-weight: 600; }
+  #print-sheet { display: none; }
+  @media print {
+    body { background: #fff; }
+    body > *:not(#print-sheet) { display: none !important; }
+    #print-sheet { display: block; font-size: 12px; color: #000; }
+    #print-sheet h1 { font-size: 18px; margin: 0 0 4px; }
+    #print-sheet table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    #print-sheet th, #print-sheet td { border: 1px solid #999; padding: 5px 6px; text-align: left; vertical-align: top; }
+    #print-sheet td.box { width: 22px; }
+    #print-sheet td.num, #print-sheet th.num { text-align: right; width: 70px; }
+    #print-sheet tr.group td { background: #eee; font-weight: bold; }
+  }
+
+  @media (max-width: 640px) {
+    select, input[type=text], input[type=password] { min-width: 0; width: 100%; }
+    .row > div { width: 100%; }
+    button.primary { width: 100%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Read an Invoice</h1>
+  <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
+</header>
+
+<main>
+  <!-- Sign-in: the same person and PIN as maintenance -->
+  <section class="card" id="signin-card" hidden>
+    <h2>Sign in</h2>
+    <div class="row">
+      <div>
+        <label for="si-location">Where you work</label>
+        <select id="si-location"><option value="">Loading…</option></select>
+      </div>
+      <div>
+        <label for="si-person">Your name</label>
+        <select id="si-person" disabled><option value="">Choose where you work first</option></select>
+      </div>
+      <div>
+        <label for="si-pin">PIN</label>
+        <input type="password" id="si-pin" inputmode="numeric" autocomplete="off" placeholder="Same PIN as maintenance">
+      </div>
+      <div><button type="button" id="si-go">Sign in</button></div>
+    </div>
+    <div id="si-error"></div>
+  </section>
+
+  <section class="card" id="signed-in-card" hidden>
+    <div class="signed-in">
+      <span class="views">
+        <button type="button" class="secondary small" data-tab="invoices" aria-pressed="true">Invoices</button>
+        <button type="button" class="secondary small" data-tab="loads" aria-pressed="false">Load sheets</button>
+        <button type="button" class="secondary small" data-tab="receive" aria-pressed="false">Receiving</button>
+        <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
+      </span>
+      <span>Signed in as <span class="who" id="who"></span> <span class="muted" id="who-extra"></span>
+        <button type="button" class="secondary small" id="sign-out">Sign out</button></span>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+   <div id="view-invoices">
+    <section class="card" id="capture">
+      <h2>1. The invoice</h2>
+      <div class="row">
+        <div>
+          <label for="camp">Camp this delivery is for</label>
+          <select id="camp"><option>Loading camps…</option></select>
+        </div>
+        <div>
+          <button type="button" class="secondary" id="add-page">+ Add a page photo</button>
+          <input type="file" id="file" accept="image/*" multiple>
+        </div>
+      </div>
+      <div class="pages" id="pages"></div>
+      <p class="muted" id="pages-hint">One photo per page, in page order. A two-page invoice is two photos.</p>
+      <button type="button" class="primary" id="read" disabled>Read invoice</button>
+      <div class="status" id="status"></div>
+      <div id="error"></div>
+    </section>
+
+    <section class="card" id="result" hidden>
+      <h2>2. What the tool read</h2>
+      <div class="summary" id="summary"></div>
+    </section>
+
+    <section class="card" id="lines-card" hidden>
+      <h2>3. Decide every line</h2>
+      <p class="muted" id="lines-help">Lines the tool matched cleanly are accepted with the invoice. Lines marked <b>Needs review</b> need a decision first: accept the suggestion, change it, mark it as not stock, or create a new item. Use <b>Reallocate</b> on any line that is really another camp's goods.</p>
+      <div class="filters" id="filters">
+        <button type="button" class="secondary small" data-filter="all" aria-pressed="true">All lines</button>
+        <button type="button" class="secondary small" data-filter="review" aria-pressed="false">Needs review</button>
+        <button type="button" class="secondary small" data-filter="done" aria-pressed="false">Decided</button>
+        <button type="button" class="secondary small" id="rematch" hidden>Match again</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>On the invoice</th><th>Size</th><th class="num">Qty</th>
+              <th class="num">Unit price</th><th class="num">Line total</th><th>Stock item and decision</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="lines"></tbody>
+        </table>
+      </div>
+      <div class="accept-bar" id="accept-bar"></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent reads</h2>
+      <div class="recent-list" id="recent"><span class="muted">Loading…</span></div>
+    </section>
+
+   </div>
+
+   <!-- Receiving: camp checks a load sheet off the truck; this is where stock moves -->
+   <div id="view-receive" hidden>
+    <section class="card">
+      <h2>Deliveries to receive</h2>
+      <p class="muted">Load sheets sent to your camp. Open one as the truck is unloaded (or the next morning), tap <b>Receive all</b>, then correct only what's different. Confirming puts what actually arrived into the camp's stock.</p>
+      <div class="recent-list" id="rc-list"><span class="muted">Loading…</span></div>
+      <div id="rc-error"></div>
+    </section>
+
+    <section class="card" id="rc-card" hidden>
+      <h2 id="rc-title"></h2>
+      <div class="muted" id="rc-meta"></div>
+      <div class="filters" id="rc-tools" style="margin-top:12px">
+        <button type="button" id="rc-all">Receive all</button>
+        <span class="muted">Fills every line with what was sent. Then change any line that's short, over or damaged.</span>
+      </div>
+      <div class="table-wrap">
+        <table class="grid">
+          <colgroup><col><col class="c-size"><col class="c-num"><col class="c-num"><col class="c-dmg"></colgroup>
+          <thead><tr><th>Item</th><th>Size</th><th class="num">Sent</th><th class="num">Received</th><th>Damaged</th></tr></thead>
+          <tbody id="rc-lines"></tbody>
+        </table>
+      </div>
+      <div id="rc-extras-box" style="margin-top:16px">
+        <h3 style="margin:0 0 6px;font-size:15px;color:var(--forest)">Not on the load sheet</h3>
+        <p class="muted" style="margin:0 0 8px">Anything that came off the truck but isn't listed above — often another camp's goods. It waits here for Base to decide: into a camp's stock, or back to Maun.</p>
+        <div class="creator-list" id="rc-extras"></div>
+        <button type="button" class="secondary" id="rc-add-extra" style="margin-top:8px">+ Add an item not on the load sheet</button>
+      </div>
+      <div id="rc-finish">
+        <div class="row" style="margin-top:16px">
+          <div>
+            <label for="rc-date">Date the goods arrived</label>
+            <input type="date" id="rc-date">
+          </div>
+          <div id="rc-period-box" hidden>
+            <label for="rc-period">Book to stock month</label>
+            <select id="rc-period"></select>
+          </div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <label for="rc-note">Note for Base (optional)</label>
+          <input type="text" id="rc-note" autocomplete="off" placeholder="e.g. truck arrived after dark, checked onto shelves next morning">
+        </div>
+        <div class="accept-bar">
+          <button type="button" id="rc-confirm">Confirm receipt</button>
+          <span class="muted" id="rc-summary"></span>
+        </div>
+      </div>
+    </section>
+   </div>
+
+   <!-- Stock list: looking after the catalogue -->
+   <div id="view-stock" hidden>
+    <section class="card" id="stock-card">
+      <div class="signed-in"><h2 style="margin:0">Stock list</h2>
+        <button type="button" id="new-stock-item" hidden>New stock item</button></div>
+      <div id="stock-notice"></div>
+      <p class="muted">Every stock item in the catalogue. <b>History</b> shows every change. People on the stock-item list can also <b>Edit</b> a name or pack size, <b>Merge</b> a duplicate into the item it should be, or <b>Delete</b> an item no longer stocked (camp-stock D-007, D-013). Invoices and history already linked to an item always stay with it.</p>
+      <div class="field">
+        <label for="stock-search">Search</label>
+        <input type="search" id="stock-search" placeholder="Type part of a name or category, e.g. flour">
+      </div>
+      <div class="pick-list" id="stock-list"><span class="muted">Type to search the stock list.</span></div>
+    </section>
+
+    <section class="card" id="onhand-card">
+      <h2>Stock on hand</h2>
+      <p class="muted">What a camp holds now, worked out from every receipt — never a number typed in. Damaged units that arrived are counted, and shown so someone can decide about them.</p>
+      <div class="row">
+        <div><label for="oh-camp">Camp</label><select id="oh-camp"></select></div>
+      </div>
+      <div class="table-wrap" style="margin-top:12px">
+        <table><thead><tr><th>Item</th><th>Size</th><th class="num">On hand</th><th>Last received</th></tr></thead><tbody id="oh-lines"></tbody></table>
+      </div>
+    </section>
+
+    <section class="card" id="retired-card">
+      <h2>Deleted items</h2>
+      <p class="muted">Items taken out of the stock list. Their history stays. A deleted item can be restored; a merged one can't, because everything it held now belongs to the item it was merged into.</p>
+      <div class="pick-list" id="retired-list"><span class="muted">Loading…</span></div>
+      <div id="retired-error"></div>
+    </section>
+
+    <section class="card" id="creators-card">
+      <h2>Who can create stock items</h2>
+      <p class="muted">A new stock item is permanent catalogue structure, so only the people on this list can create one (camp-stock D-011). Anyone on the list can add or remove people, whatever their job title.</p>
+      <div class="creator-list" id="creators"><span class="muted">Loading…</span></div>
+      <div class="row" id="creator-add" hidden style="margin-top:12px">
+        <div>
+          <label for="ca-location">Add someone — where they work</label>
+          <select id="ca-location"></select>
+        </div>
+        <div>
+          <label for="ca-person">Name</label>
+          <select id="ca-person" disabled><option value="">Choose where they work first</option></select>
+        </div>
+        <div><button type="button" class="secondary" id="ca-go" disabled>Add to the list</button></div>
+      </div>
+      <div id="creators-error"></div>
+    </section>
+   </div>
+
+   <!-- Load sheets: what leaves Maun for one camp -->
+   <div id="view-loads" hidden>
+    <section class="card">
+      <h2>Build a load sheet</h2>
+      <p class="muted">Collects every accepted invoice line for the camp that isn't on a load sheet yet — including lines reallocated to it from other invoices. The quantity is the storeman's handwritten count where there is one, otherwise the printed one. Building again adds new lines to the camp's draft.</p>
+      <div class="row">
+        <div>
+          <label for="ls-camp">Camp</label>
+          <select id="ls-camp"></select>
+        </div>
+        <div><button type="button" id="ls-build" disabled>Build load sheet</button></div>
+      </div>
+      <div class="status" id="ls-waiting"></div>
+      <div id="ls-error"></div>
+    </section>
+
+    <section class="card" id="ls-card" hidden>
+      <h2 id="ls-title"></h2>
+      <div class="muted" id="ls-meta"></div>
+      <div class="table-wrap" style="margin-top:12px">
+        <table class="grid">
+          <colgroup><col><col class="c-size"><col class="c-num"><col><col style="width:170px"></colgroup>
+          <thead><tr><th>Item</th><th>Size</th><th class="num">Qty</th><th>From</th><th></th></tr></thead>
+          <tbody id="ls-lines"></tbody>
+        </table>
+      </div>
+      <div class="accept-bar" id="ls-bar"></div>
+    </section>
+
+    <section class="card">
+      <h2>Recent load sheets</h2>
+      <div class="recent-list" id="ls-recent"><span class="muted">Loading…</span></div>
+    </section>
+   </div>
+  </div>
+</main>
+
+<!-- The printable load sheet: no prices, a tick box and a blank received column -->
+<div id="print-sheet"></div>
+
+<!-- Change: pick a different stock item -->
+<div class="modal-back" id="choose-modal">
+  <div class="modal">
+    <h3>Change the stock item</h3>
+    <div class="muted" id="choose-line"></div>
+    <div class="field">
+      <label for="choose-search">Search the stock list</label>
+      <input type="search" id="choose-search" placeholder="Type part of a name or category, e.g. flour">
+    </div>
+    <div class="pick-list" id="choose-list"></div>
+    <div class="buttons"><button type="button" class="secondary" data-close>Cancel</button></div>
+  </div>
+</div>
+
+<!-- Adjust a load sheet quantity before sending -->
+<div class="modal-back" id="adjust-modal">
+  <div class="modal">
+    <h3>Adjust the quantity</h3>
+    <div class="muted" id="adjust-line"></div>
+    <div class="field">
+      <label for="adj-qty">Quantity going on the truck</label>
+      <input type="text" id="adj-qty" inputmode="decimal" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="adj-note">Why it differs from the invoices</label>
+      <input type="text" id="adj-note" autocomplete="off" placeholder="e.g. 2 short from supplier">
+    </div>
+    <div id="adjust-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="adj-go">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reallocate: this line is another camp's goods -->
+<div class="modal-back" id="realloc-modal">
+  <div class="modal">
+    <h3>Reallocate to another camp</h3>
+    <div class="muted" id="realloc-line"></div>
+    <p class="muted">For another camp's goods bought on the same invoice. The line still needs its stock item decided.</p>
+    <div class="field">
+      <label for="realloc-to">This line goes to</label>
+      <select id="realloc-to"></select>
+    </div>
+    <div id="realloc-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="realloc-go">Reallocate</button>
+    </div>
+  </div>
+</div>
+
+<!-- Edit a stock item's name and pack size (the create_item list only), and its history -->
+<div class="modal-back" id="rename-modal">
+  <div class="modal">
+    <h3 id="rename-title">Rename</h3>
+    <div class="muted" id="rename-item"></div>
+    <div id="rename-field">
+      <div class="field">
+        <label for="rn-name">Name</label>
+        <input type="text" id="rn-name" autocomplete="off">
+        <div class="hint" id="rn-hint"></div>
+      </div>
+      <div class="field">
+        <label for="rn-size">Pack size</label>
+        <input type="text" id="rn-size" autocomplete="off" placeholder="e.g. 5L, 410g, 24's">
+        <div class="hint" id="rn-size-hint">If the size is in the name, move it here.</div>
+      </div>
+    </div>
+    <div class="field">
+      <label>Changes so far</label>
+      <div id="rn-history" class="muted">Loading…</div>
+    </div>
+    <div id="rename-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Close</button>
+      <button type="button" id="rn-go">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- An item that arrived but isn't on the load sheet -->
+<div class="modal-back" id="extra-modal">
+  <div class="modal">
+    <h3>Item not on the load sheet</h3>
+    <div class="field">
+      <label for="ex-search">What is it? Search the stock list</label>
+      <input type="search" id="ex-search" placeholder="e.g. tomato sauce">
+    </div>
+    <div class="pick-list" id="ex-list"></div>
+    <div class="field">
+      <label for="ex-desc">Or, if it isn't in the stock list, describe it</label>
+      <input type="text" id="ex-desc" autocomplete="off" placeholder="e.g. 2 boxes of Sango's fresh veg">
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div><label for="ex-qty">How many</label><input type="text" id="ex-qty" inputmode="decimal" class="rc-qty"></div>
+      <div style="flex:1"><label for="ex-note">Note (optional)</label><input type="text" id="ex-note" autocomplete="off" placeholder="e.g. labelled for Sango"></div>
+    </div>
+    <div class="field"><button type="button" class="secondary small" id="ex-photo-btn">Add photo</button> <span id="ex-photo"></span></div>
+    <div id="extra-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="ex-go">Record it</button>
+    </div>
+  </div>
+</div>
+
+<!-- Base decides about an item that wasn't on the load sheet -->
+<div class="modal-back" id="decide-modal">
+  <div class="modal">
+    <h3>Decide: item not on the load sheet</h3>
+    <div class="muted" id="dc-what"></div>
+    <div class="field" id="dc-item-field">
+      <label for="dc-search">Which stock item is it?</label>
+      <input type="search" id="dc-search" placeholder="Search the stock list">
+      <div class="pick-list" id="dc-list"></div>
+    </div>
+    <div class="field">
+      <label for="dc-camp">Put it into the stock of</label>
+      <select id="dc-camp"></select>
+    </div>
+    <div id="decide-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" class="secondary" id="dc-return">Return to Maun</button>
+      <button type="button" id="dc-allocate">Put into stock</button>
+    </div>
+  </div>
+</div>
+
+<!-- Correct a received count after the receipt was confirmed -->
+<div class="modal-back" id="correct-modal">
+  <div class="modal">
+    <h3>Correct the received count</h3>
+    <div class="muted" id="co-what"></div>
+    <p class="muted">The receipt stays as it was; the camp's stock is adjusted by the difference, and the correction is shown with your name.</p>
+    <div class="row">
+      <div><label for="co-qty">Correct count received</label><input type="text" id="co-qty" inputmode="decimal" class="rc-qty"></div>
+      <div style="flex:1"><label for="co-reason">Why</label><input type="text" id="co-reason" autocomplete="off" placeholder="e.g. 1 box found behind the freezer"></div>
+    </div>
+    <div id="correct-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="co-go">Save correction</button>
+    </div>
+  </div>
+</div>
+
+<!-- Merge a duplicate into the item it should be (the create_item list only) -->
+<div class="modal-back" id="merge-modal">
+  <div class="modal">
+    <h3>Merge a duplicate</h3>
+    <div id="merge-from" class="muted"></div>
+    <div class="field">
+      <label for="merge-search">Merge it into — the item to keep</label>
+      <input type="search" id="merge-search" placeholder="Search for the item to keep">
+    </div>
+    <div class="pick-list" id="merge-list"></div>
+    <div id="merge-confirm" hidden class="note-box"></div>
+    <div id="merge-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="merge-go" disabled>Merge</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete (retire) an item no longer stocked -->
+<div class="modal-back" id="retire-modal">
+  <div class="modal">
+    <h3>Delete from the stock list</h3>
+    <div id="retire-item" class="muted"></div>
+    <p class="muted">It leaves the stock list, matching and the Change search. Its history stays, and it can be restored from Deleted items.</p>
+    <div class="field">
+      <label for="retire-reason">Why</label>
+      <input type="text" id="retire-reason" autocomplete="off" placeholder="e.g. no longer stocked">
+    </div>
+    <div id="retire-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="retire-go">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create a new stock item from a line (the create_item list only) -->
+<div class="modal-back" id="create-modal">
+  <div class="modal">
+    <h3>Create a new stock item</h3>
+    <div class="muted" id="create-line"></div>
+    <div class="field">
+      <label for="cr-sheet">Sheet</label>
+      <select id="cr-sheet"></select>
+    </div>
+    <div class="field">
+      <label for="cr-category">Category</label>
+      <select id="cr-category"></select>
+    </div>
+    <div class="field">
+      <label for="cr-name">Name</label>
+      <input type="text" id="cr-name" autocomplete="off" placeholder="e.g. Flour - Bread white">
+      <div class="suggest" id="cr-suggest"></div>
+      <div class="hint" id="cr-name-hint">Capital first. The main grouping first, then the description, separated " - " — "Flour - Brown", never "Brown Flour".</div>
+    </div>
+    <div class="field">
+      <label for="cr-type">Kind of item</label>
+      <select id="cr-type">
+        <option value="fixed_unit">Fixed unit — counted in packs (tins, bottles, bags)</option>
+        <option value="variable_weight">Variable weight — tracked in kg (butchery, some produce)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="cr-size">Pack size</label>
+      <input type="text" id="cr-size" autocomplete="off" placeholder="e.g. 2.5kg, 410g, 750ml">
+      <div class="hint">Other pack sizes within 25% will match this item automatically (D-010).</div>
+    </div>
+    <div class="field" id="cr-camps-field" hidden>
+      <label>Usually stocked at</label>
+      <div class="suggest" id="cr-camps"></div>
+      <div class="hint">Informational only — any camp can still receive it.</div>
+    </div>
+    <div class="field muted" id="cr-similar"></div>
+    <div id="create-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="cr-go">Create and use this item</button>
+    </div>
+  </div>
+</div>
+
+<div class="viewer" id="viewer">
+  <button type="button" class="close secondary small" id="viewer-close">Close</button>
+  <img alt="Invoice page">
+</div>
+
+<script>
+const API = "https://uqfgkgmvnqiigtoymqbe.supabase.co/functions/v1/camp-stock";
+const DEFAULT_CAMP = "Khwai Guest House"; // the first test's camp (tools/camp-stock/docs/requirements.md)
+const MAX_SIDE = 2400; // the reader downsamples to a fixed budget anyway; this keeps the upload small for Maun bandwidth
+const SESSION_KEY = "camp_stock_session";
+
+const $ = (id) => document.getElementById(id);
+const photos = [];      // { dataUrl }
+let current = null;     // the invoice on screen
+let filter = "all";
+let busy = false;
+let session = null;     // { token, person: { id, name, can_create_item } }
+let locations = [];
+let catalogue = null;   // loaded the first time Change or Create opens
+let activeLine = null;  // the line a modal is open for
+
+const money = (n) => n == null ? "—" : Number(n).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const isOpen = (l) => l.match_status === "needs_review" || l.match_status === "flagged_new";
+const locked = () => current?.invoice?.status === "accepted";
+
+// --- Talking to the server ------------------------------------------------
+
+async function api(action, { body, query = "" } = {}) {
+  const headers = {};
+  if (session) headers["x-stock-session"] = session.token;
+  if (body) headers["content-type"] = "application/json";
+  const resp = await fetch(`${API}?action=${action}${query}`, body ? { method: "POST", headers, body: JSON.stringify(body) } : { headers });
+  let data;
+  try { data = await resp.json(); } catch { throw new Error(`The server answered ${resp.status} with something that was not JSON.`); }
+  if (data.signed_out) { signOut(); throw new Error("Your sign-in has expired. Please sign in again."); }
+  if (!resp.ok || data.error) throw new Error(data.error || `The server answered ${resp.status}.`);
+  return data;
+}
+
+// --- Sign-in --------------------------------------------------------------
+
+function saveSession() { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch {} }
+function loadSession() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch { return null; } }
+
+async function loadLocations() {
+  const data = await api("locations");
+  locations = data.locations;
+  const opts = locations.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  $("si-location").innerHTML = `<option value="">Choose…</option>` + opts;
+  $("ca-location").innerHTML = `<option value="">Choose…</option>` + opts;
+  $("camp").innerHTML = locations.map((l) =>
+    `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+}
+
+async function fillPeople(locationSelect, personSelect, placeholder) {
+  const id = $(locationSelect).value;
+  const ps = $(personSelect);
+  ps.disabled = true;
+  if (!id) { ps.innerHTML = `<option value="">${placeholder}</option>`; return; }
+  ps.innerHTML = `<option value="">Loading…</option>`;
+  const { people } = await api("people", { query: `&location_id=${id}` });
+  ps.innerHTML = `<option value="">Choose…</option>` + people.map((p) =>
+    `<option value="${p.id}" data-pin="${p.pin_set}">${esc(p.name)}${p.pin_set ? "" : " (no PIN yet)"}</option>`).join("");
+  ps.disabled = false;
+}
+
+$("si-location").addEventListener("change", () => fillPeople("si-location", "si-person", "Choose where you work first").catch(showSignInError));
+$("si-go").addEventListener("click", signIn);
+$("si-pin").addEventListener("keydown", (e) => { if (e.key === "Enter") signIn(); });
+
+async function signIn() {
+  $("si-error").innerHTML = "";
+  const opt = $("si-person").selectedOptions[0];
+  if (!opt || !opt.value) return showSignInError(new Error("Choose your name."));
+  if (opt.dataset.pin === "false") return showSignInError(new Error("You don't have a PIN yet. Set one on the maintenance sign-in first — it's the same PIN."));
+  try {
+    session = await api("sign_in", { body: { person_id: opt.value, pin: $("si-pin").value } });
+    $("si-pin").value = "";
+    saveSession();
+    startApp();
+  } catch (e) { showSignInError(e); }
+}
+function showSignInError(e) { $("si-error").innerHTML = `<div class="error">${esc(e.message || e)}</div>`; }
+
+function signOut() {
+  session = null;
+  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+  current = null;
+  $("app").hidden = true;
+  $("signed-in-card").hidden = true;
+  $("signin-card").hidden = false;
+}
+$("sign-out").addEventListener("click", signOut);
+
+function startApp() {
+  $("signin-card").hidden = true;
+  $("signed-in-card").hidden = false;
+  $("app").hidden = false;
+  $("who").textContent = session.person.name;
+  $("who-extra").textContent = session.person.can_create_item ? "· can create stock items" : "";
+  $("creator-add").hidden = !session.person.can_create_item;
+  $("new-stock-item").hidden = !session.person.can_create_item;
+  loadRecent();
+  loadCreators();
+  showView("invoices");
+}
+
+// --- Invoices / Load sheets ---------------------------------------------------
+
+function showView(name) {
+  $("view-invoices").hidden = name !== "invoices";
+  $("view-loads").hidden = name !== "loads";
+  $("view-stock").hidden = name !== "stock";
+  $("view-receive").hidden = name !== "receive";
+  document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
+  if (name === "loads") refreshLoads();
+  if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
+  if (name === "receive") loadReceiving();
+}
+document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.tab)));
+
+// --- Recent reads -----------------------------------------------------------
+
+async function loadRecent() {
+  try {
+    const { invoices } = await api("invoices");
+    if (!invoices.length) { $("recent").innerHTML = `<span class="muted">No invoices read yet.</span>`; return; }
+    $("recent").innerHTML = invoices.map((i) => {
+      const when = new Date(i.captured_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const state = i.status === "accepted" ? " · accepted" : i.matched_at ? " · to review" : " · not matched";
+      return `<button type="button" class="secondary" data-open="${i.id}">
+        ${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
+        <span class="muted"> · BWP ${money(i.total_incl)} · read ${when}${state}</span></button>`;
+    }).join("");
+  } catch (e) {
+    $("recent").innerHTML = `<span class="muted">Could not load recent reads: ${esc(e.message)}</span>`;
+  }
+}
+
+$("recent").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-open]");
+  if (!btn || busy) return;
+  clearError();
+  setStatus("Opening…", true);
+  try {
+    render(await api("invoice", { query: `&id=${btn.dataset.open}` }));
+    setStatus("");
+    $("result").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { setStatus(""); showError(e); }
+});
+
+// --- Photos ---------------------------------------------------------------
+
+$("add-page").addEventListener("click", () => $("file").click());
+$("file").addEventListener("change", async (ev) => {
+  for (const f of ev.target.files) photos.push({ dataUrl: await shrink(f) });
+  ev.target.value = "";
+  drawPages();
+});
+
+// Scales a photo down to MAX_SIDE on its long side and re-encodes it as
+// JPEG — the same place maintenance already resizes photos before upload.
+function shrink(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, MAX_SIDE / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL("image/jpeg", 0.88));
+    };
+    img.onerror = () => reject(new Error(`${file.name} could not be opened as a photo.`));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function drawPages() {
+  $("pages").innerHTML = photos.map((p, i) => `
+    <div class="page">
+      <img src="${p.dataUrl}" data-view="${i}" alt="Page ${i + 1}">
+      Page ${i + 1}<br>
+      <button type="button" class="secondary small" data-remove="${i}" ${busy ? "disabled" : ""}>Remove</button>
+    </div>`).join("");
+  $("read").disabled = busy || photos.length === 0;
+  $("pages-hint").hidden = photos.length > 0;
+}
+$("pages").addEventListener("click", (ev) => {
+  const rm = ev.target.closest("[data-remove]");
+  if (rm && !busy) { photos.splice(+rm.dataset.remove, 1); drawPages(); return; }
+  const v = ev.target.closest("[data-view]");
+  if (v) openViewer(photos[+v.dataset.view].dataUrl);
+});
+
+// --- Read, then match: one button ----------------------------------------
+
+$("read").addEventListener("click", async () => {
+  const location_id = $("camp").value;
+  if (!location_id) return showError(new Error("Choose the camp first."));
+  clearError();
+  setBusy(true);
+  const started = Date.now();
+  const tick = (label) => setStatus(`${label} · ${Math.round((Date.now() - started) / 1000)}s`, true);
+  let label = `Reading ${photos.length} page${photos.length > 1 ? "s" : ""} — this usually takes under a minute`;
+  const timer = setInterval(() => tick(label), 1000);
+  tick(label);
+  try {
+    const read = await api("read_invoice", { body: { location_id, photo_data_urls: photos.map((p) => p.dataUrl) } });
+    render(read);
+    if (read.page_errors?.length) showError(new Error("Some pages could not be read:\n" + read.page_errors.join("\n")));
+    label = `Matching ${read.lines.length} lines to the stock list`;
+    tick(label);
+    render(await api("match_invoice", { body: { invoice_id: read.invoice.id } }));
+    photos.length = 0;
+    drawPages();
+    setStatus(`Done in ${Math.round((Date.now() - started) / 1000)}s.`);
+    loadRecent();
+  } catch (e) {
+    setStatus("");
+    showError(e);
+    if (current) $("rematch").hidden = false; // the read is saved; only the match needs running again
+  } finally {
+    clearInterval(timer);
+    setBusy(false);
+  }
+});
+
+$("rematch").addEventListener("click", async () => {
+  if (!current || busy) return;
+  clearError();
+  setBusy(true);
+  setStatus("Matching again…", true);
+  try {
+    render(await api("match_invoice", { body: { invoice_id: current.invoice.id } }));
+    setStatus("Matched.");
+    loadRecent();
+  } catch (e) { setStatus(""); showError(e); }
+  finally { setBusy(false); }
+});
+
+// --- Showing the result ---------------------------------------------------
+
+function render(data) {
+  current = data;
+  const inv = data.invoice;
+  const r = data.reconciliation;
+  const diff = r.checked ? r.difference : null;
+  const adds = r.checked && Math.abs(diff) <= 0.05; // a few thebe of rounding is normal
+  const matched = inv.matched_at != null;
+
+  const tiles = [
+    ["Supplier", inv.supplier || "not read"],
+    ["Invoice number", inv.invoice_number || "not read"],
+    ["Date", inv.invoice_date_printed || "not read"],
+    ["Camp", inv.locations?.name || ""],
+    ["Printed total", r.checked ? `BWP ${money(r.printed_total)}` : "none found"],
+    ["Lines add up to", `BWP ${money(inv.lines_total_incl)}`],
+    ["Read by", inv.captured?.name || "—"],
+  ];
+  const checkTile = !r.checked
+    ? `<div class="tile warn"><div class="k">Totals check</div><div class="v">No printed total to check against</div></div>`
+    : `<div class="tile ${adds ? "ok" : "bad"}"><div class="k">Totals check</div><div class="v">${adds ? "Adds up ✓" : `Out by BWP ${money(diff)}`}</div></div>`;
+  const matchTile = !matched
+    ? `<div class="tile warn"><div class="k">Matching</div><div class="v">Not matched yet</div></div>`
+    : `<div class="tile ${data.needs_review_count ? "warn" : "ok"}"><div class="k">Decided / needs review</div><div class="v">${data.matched_count} / ${data.needs_review_count}</div></div>`;
+  const stateTile = locked()
+    ? `<div class="tile ok"><div class="k">Invoice</div><div class="v">Accepted by ${esc(inv.accepter?.name || "")}</div></div>`
+    : "";
+  const cost = Number(inv.read_cost_usd || 0) + Number(inv.match_cost_usd || 0);
+
+  $("summary").innerHTML =
+    tiles.map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${esc(v)}</div></div>`).join("") +
+    checkTile + matchTile + stateTile +
+    (data.reallocated_count ? `<div class="tile"><div class="k">For other camps</div><div class="v">${data.reallocated_count} line${data.reallocated_count > 1 ? "s" : ""}</div></div>` : "") +
+    `<div class="tile"><div class="k">Cost of this read</div><div class="v">$${cost.toFixed(3)}</div></div>` +
+    (inv.photo_urls || [inv.photo_url]).filter(Boolean).map((u, i) =>
+      `<div class="tile"><div class="k">Photo</div><div class="v"><button type="button" class="secondary small" data-photo="${esc(u)}">View page ${i + 1}</button></div></div>`).join("");
+
+  $("result").hidden = false;
+  $("lines-card").hidden = false;
+  $("rematch").hidden = matched || locked();
+  $("lines-help").hidden = locked();
+  drawLines();
+  drawAcceptBar();
+}
+
+$("summary").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-photo]");
+  if (b) openViewer(b.dataset.photo);
+});
+
+function statusChip(l) {
+  if (l.match_status === "confirmed") return `<span class="chip confirmed">Confirmed</span>`;
+  if (l.match_status === "not_stock") return `<span class="chip notstock">Not stock</span>`;
+  if (l.match_status === "matched") return `<span class="chip matched">Matched</span>`;
+  return `<span class="chip review">Needs review</span>`;
+}
+
+function lineActions(l) {
+  if (locked()) return "";
+  const b = (decision, label, cls = "secondary") => `<button type="button" class="${cls} small" data-line="${l.id}" data-decision="${decision}">${label}</button>`;
+  const realloc = l.destination_location_id ? b("unrealloc", `Back to ${esc(current.invoice.locations?.name || "this camp")}`) : b("reallocate", "Reallocate");
+  if (l.reviewed_at) {
+    return `<div class="muted">${l.match_status === "not_stock" ? "Marked not stock" : "Confirmed"} by ${esc(l.reviewer?.name || "")}</div>
+      <div class="actions">${b("reopen", "Undo")}${l.match_status === "not_stock" ? "" : realloc}</div>`;
+  }
+  const buttons = [];
+  if (isOpen(l) && l.matched_stock_item_id) buttons.push(b("accept", "Accept suggestion", ""));
+  buttons.push(b("choose", "Change"));
+  buttons.push(b("not_stock", "Not stock"));
+  if (isOpen(l) && session?.person?.can_create_item) buttons.push(b("create", "New item"));
+  buttons.push(realloc);
+  return `<div class="actions">${buttons.join("")}</div>`;
+}
+
+function drawLines() {
+  const rows = current.lines.filter((l) =>
+    filter === "all" || (filter === "review" ? isOpen(l) : !isOpen(l)));
+  const multiPage = (current.invoice.photo_urls || []).length > 1;
+  $("lines").innerHTML = rows.map((l) => {
+    const item = l.stock_items;
+    const c = l.match_confidence || {};
+    const confText = ["sheet", "category", "item"].filter((k) => c[k] != null).map((k) => `${k} ${Math.round(c[k] * 100)}%`).join(" · ");
+    const qty = l.handwritten_qty != null && l.handwritten_qty !== l.printed_qty
+      ? `${l.printed_qty ?? "—"} <span class="hand" title="Written by hand on the invoice">✎ ${l.handwritten_qty}</span>`
+      : (l.printed_qty ?? "—");
+    const unit = l.unit_price_excl != null ? `${money(l.unit_price_excl)} <span class="muted">excl</span>` : l.unit_price_incl != null ? `${money(l.unit_price_incl)} <span class="muted">incl</span>` : "—";
+    const changed = l.reviewed_at && l.proposed_stock_item_id && l.proposed_stock_item_id !== l.matched_stock_item_id;
+    return `<tr class="${isOpen(l) ? "open" : ""}">
+      <td class="muted">${multiPage ? `p${l.page_no}·` : ""}${l.line_no ?? ""}</td>
+      <td><div class="desc">${esc(l.raw_description)}</div>
+        ${l.product_code ? `<div class="muted">code ${esc(l.product_code)}</div>` : ""}
+        ${l.expiry_date ? `<div class="muted">expiry ${esc(l.expiry_date)}</div>` : ""}
+        ${l.legible === false || l.read_notes ? `<div class="reason">Reading: ${esc(l.read_notes || "hard to read")}</div>` : ""}</td>
+      <td>${esc(l.raw_size || "—")}</td>
+      <td class="num">${qty}</td>
+      <td class="num">${unit}</td>
+      <td class="num">${money(l.line_total_incl)}</td>
+      <td>${item ? `<div class="match-name">${isOpen(l) ? "Suggested: " : ""}${esc(item.name)}${item.standard_size ? ` · ${esc(item.standard_size)}` : ""}</div>` : ""}
+        ${!item && l.match_status !== "not_stock" ? `<div class="muted">No suggestion</div>` : ""}
+        ${!l.reviewed_at && l.match_path ? `<div class="muted">${esc(l.match_path)}</div>` : ""}
+        ${(l.size_status || "").startsWith("within tolerance") && !l.reviewed_at ? `<div class="tol">Size ${esc(l.size_status.replace("within tolerance: ", ""))} — within tolerance</div>` : ""}
+        ${confText && !l.reviewed_at ? `<div class="conf">${confText}</div>` : ""}
+        ${changed ? `<div class="muted">The tool had suggested ${esc(l.proposed?.name || "")}${l.proposed?.standard_size ? " · " + esc(l.proposed.standard_size) : ""}</div>` : ""}
+        ${isOpen(l) && l.review_reason ? `<div class="reason">${esc(l.review_reason)}</div>` : ""}
+        ${l.destination_location_id ? `<div class="dest" title="Reallocated by ${esc(l.reallocator?.name || "")}">→ for ${esc(l.destination?.name || "another camp")}</div>` : ""}
+        ${lineActions(l)}</td>
+      <td>${statusChip(l)}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="8" class="muted">No lines in this view.</td></tr>`;
+}
+
+function drawAcceptBar() {
+  const inv = current.invoice;
+  if (locked()) {
+    const when = new Date(inv.accepted_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    $("accept-bar").innerHTML = `<span><b>Accepted</b> by ${esc(inv.accepter?.name || "")}, ${when}. This invoice is locked.</span>`;
+    return;
+  }
+  if (!inv.matched_at) { $("accept-bar").innerHTML = ""; return; }
+  const left = current.needs_review_count;
+  $("accept-bar").innerHTML = `
+    <button type="button" id="accept-invoice" ${left ? "disabled" : ""}>Accept invoice</button>
+    <span class="${left ? "reason" : "muted"}">${left
+      ? `${left} line${left > 1 ? "s" : ""} still need${left > 1 ? "" : "s"} a decision.`
+      : "Every line is decided. Accepting confirms the matched lines in your name and locks the invoice."}</span>`;
+}
+
+$("accept-bar").addEventListener("click", async (ev) => {
+  if (ev.target.id !== "accept-invoice" || busy) return;
+  if (!confirm("Accept this invoice? Every line will be confirmed in your name and the invoice will be locked.")) return;
+  clearError();
+  try {
+    render(await api("accept_invoice", { body: { invoice_id: current.invoice.id } }));
+    loadRecent();
+  } catch (e) { showError(e); }
+});
+
+// --- Decisions on a line ----------------------------------------------------
+
+$("lines").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-decision]");
+  if (!b || busy) return;
+  const line = current.lines.find((l) => l.id === b.dataset.line);
+  const decision = b.dataset.decision;
+  clearError();
+  if (decision === "choose") return openChoose(line);
+  if (decision === "reallocate") return openRealloc(line);
+  if (decision === "create") return openCreate(line);
+  b.disabled = true;
+  try {
+    render(await api("review_line", { body: decision === "unrealloc"
+      ? { line_id: line.id, decision: "reallocate", location_id: null }
+      : { line_id: line.id, decision } }));
+  } catch (e) { showError(e); b.disabled = false; }
+});
+
+function openRealloc(line) {
+  activeLine = line;
+  $("realloc-line").innerHTML = lineSummary(line);
+  $("realloc-error").innerHTML = "";
+  const home = current.invoice.location_id;
+  $("realloc-to").innerHTML = locations.filter((l) => l.id !== home)
+    .map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  openModal("realloc-modal");
+}
+$("realloc-go").addEventListener("click", async () => {
+  $("realloc-go").disabled = true;
+  try {
+    render(await api("review_line", { body: { line_id: activeLine.id, decision: "reallocate", location_id: $("realloc-to").value } }));
+    closeModals();
+  } catch (e) { $("realloc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { $("realloc-go").disabled = false; }
+});
+
+async function ensureCatalogue() {
+  if (!catalogue) catalogue = (await api("catalogue")).items;
+  return catalogue;
+}
+
+function lineSummary(l) {
+  return `${esc(l.raw_description)}${l.raw_size ? " · " + esc(l.raw_size) : ""}`;
+}
+
+async function openChoose(line) {
+  activeLine = line;
+  $("choose-line").innerHTML = lineSummary(line);
+  $("choose-search").value = "";
+  $("choose-list").innerHTML = `<span class="muted">Loading the stock list…</span>`;
+  openModal("choose-modal");
+  try { await ensureCatalogue(); drawChoose(); $("choose-search").focus(); }
+  catch (e) { $("choose-list").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+function drawChoose() {
+  const q = $("choose-search").value.trim().toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  const hits = catalogue.filter((i) => {
+    const hay = `${i.name} ${i.category} ${i.sheet} ${i.standard_size || ""}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  }).slice(0, 60);
+  $("choose-list").innerHTML = hits.map((i) => `<button type="button" class="secondary" data-pick="${i.id}">
+      ${esc(i.name)}${i.standard_size ? ` · ${esc(i.standard_size)}` : ""} <span class="muted">· ${esc(i.sheet)} / ${esc(i.category)}</span></button>`).join("")
+    || `<span class="muted">Nothing in the stock list matches "${esc(q)}".${session.person.can_create_item ? " Close this and use New item if it's genuinely new." : ""}</span>`;
+}
+$("choose-search").addEventListener("input", () => catalogue && drawChoose());
+$("choose-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-pick]");
+  if (!b) return;
+  b.disabled = true;
+  try {
+    render(await api("review_line", { body: { line_id: activeLine.id, decision: "choose", stock_item_id: b.dataset.pick } }));
+    closeModals();
+  } catch (e) { $("choose-list").insertAdjacentHTML("afterbegin", `<div class="error">${esc(e.message)}</div>`); b.disabled = false; }
+});
+
+// Create: sheet and category come from the catalogue (never coined here),
+// the name is checked against the naming rule as it's typed, and the
+// server checks it all again.
+// line is null when creating straight from the Stock list (no invoice).
+async function openCreate(line) {
+  activeLine = line;
+  createStandalone = !line;
+  $("create-line").innerHTML = line ? lineSummary(line) : "Straight into the stock list — not from an invoice.";
+  $("cr-camps-field").hidden = !!line;
+  $("cr-go").textContent = line ? "Create and use this item" : "Create item";
+  if (!line) {
+    $("cr-camps").innerHTML = locations.map((l) =>
+      `<label style="display:inline-flex;gap:4px;align-items:center;font-weight:400;margin-right:10px"><input type="checkbox" value="${l.id}"> ${esc(l.name)}</label>`).join("");
+  }
+  $("create-error").innerHTML = "";
+  openModal("create-modal");
+  try { await ensureCatalogue(); } catch (e) { $("create-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+  const sheets = [...new Set(catalogue.map((i) => i.sheet))];
+  const guessSheet = ((line && line.match_path) || "").split(" / ")[0];
+  const guessCat = ((line && line.match_path) || "").split(" / ")[1];
+  $("cr-sheet").innerHTML = sheets.map((s) => `<option ${s === guessSheet ? "selected" : ""}>${esc(s)}</option>`).join("");
+  fillCategories(guessCat);
+  $("cr-name").value = "";
+  $("cr-type").value = "fixed_unit";
+  $("cr-size").value = line ? guessSize(line) : "";
+  checkName();
+  $("cr-name").focus();
+  if (line) suggestName(); else $("cr-suggest").innerHTML = "";
+}
+let createStandalone = false;
+
+// The most likely name in the house style, filled in for the person to
+// accept or change (Nicola, 2026-10-05), with two alternatives to click.
+// It never overwrites what someone has already typed.
+let suggestSeq = 0;
+async function suggestName() {
+  const mine = ++suggestSeq;
+  const line = activeLine;
+  $("cr-suggest").innerHTML = `<span class="spinner"></span><span class="muted">Finding the most likely name…</span>`;
+  try {
+    const s = await api("suggest_item_name", { body: { line_id: line.id, sheet: $("cr-sheet").value, category: $("cr-category").value } });
+    if (mine !== suggestSeq || activeLine !== line) return;
+    const typed = $("cr-name").value.trim();
+    if (s.name && (!typed || typed === $("cr-name").dataset.suggested)) {
+      $("cr-name").value = s.name;
+      $("cr-name").dataset.suggested = s.name;
+    }
+    if (s.standard_size && !$("cr-size").value.trim()) $("cr-size").value = s.standard_size;
+    if (s.item_type) $("cr-type").value = s.item_type;
+    const options = [s.name, ...(s.alternatives || [])].filter(Boolean);
+    $("cr-suggest").innerHTML = options.length
+      ? `<span class="muted">Suggested:</span>${options.map((n) => `<button type="button" class="secondary small" data-use-name="${esc(n)}">${esc(n)}</button>`).join("")}
+         <button type="button" class="secondary small" id="cr-again">Suggest again</button>`
+      : `<span class="muted">No suggestion this time.</span> <button type="button" class="secondary small" id="cr-again">Suggest again</button>`;
+    checkName();
+  } catch (e) {
+    if (mine !== suggestSeq) return;
+    $("cr-suggest").innerHTML = `<span class="muted">No suggestion: ${esc(e.message)}</span> <button type="button" class="secondary small" id="cr-again">Suggest again</button>`;
+  }
+}
+$("cr-suggest").addEventListener("click", (ev) => {
+  const use = ev.target.closest("[data-use-name]");
+  if (use) { $("cr-name").value = use.dataset.useName; $("cr-name").dataset.suggested = use.dataset.useName; checkName(); return; }
+  if (ev.target.id === "cr-again") suggestName();
+});
+function fillCategories(preferred) {
+  const cats = [...new Set(catalogue.filter((i) => i.sheet === $("cr-sheet").value).map((i) => i.category))].sort();
+  $("cr-category").innerHTML = cats.map((c) => `<option ${c === preferred ? "selected" : ""}>${esc(c)}</option>`).join("");
+  showSimilar();
+}
+$("cr-sheet").addEventListener("change", () => fillCategories());
+$("cr-category").addEventListener("change", showSimilar);
+function showSimilar() {
+  const names = catalogue.filter((i) => i.sheet === $("cr-sheet").value && i.category === $("cr-category").value)
+    .map((i) => i.name + (i.standard_size ? " " + i.standard_size : ""));
+  $("cr-similar").innerHTML = names.length ? `Already in this category: ${esc(names.join(", "))}` : "";
+}
+// The pack size as printed, tidied: "1 x 2.5KG" becomes "2.5kg".
+function guessSize(line) {
+  const m = String(line.raw_size || "").toLowerCase().match(/(\d+(?:\.\d+)?)\s*(kg|g|ml|lt|ltr|l)\b/);
+  if (!m) return "";
+  return m[1] + ({ lt: "L", ltr: "L", l: "L" }[m[2]] || m[2]);
+}
+function namingProblem(name) {
+  if (!name) return "Give the item a name.";
+  if (!/^[A-Z0-9]/.test(name)) return "Start the name with a capital letter.";
+  if (/\s{2,}/.test(name)) return "Take out the double space.";
+  if (/\s-\S|\S-\s|^-|-$/.test(name)) return 'Separate the grouping from the description with " - " (space, hyphen, space), e.g. "Flour - Brown".';
+  return null;
+}
+const RULE_HINT = 'Capital first. The main grouping first, then the description, separated " - " — "Flour - Brown", never "Brown Flour".';
+// A size in the name is a warning, not a refusal: the pack size has its
+// own field, but a few real names carry one legitimately.
+function sizeInName(name) {
+  return /(^|[^a-z0-9.])\d+(\.\d+)?\s*(kg|g|gr|ml|l|lt|ltr|litres?)(?![a-z])/i.test(name);
+}
+// Fills a hint element; returns true when the name may be saved.
+function nameFeedback(name, hintId) {
+  const problem = name ? namingProblem(name) : null;
+  const warn = !problem && name && sizeInName(name);
+  $(hintId).className = problem ? "hint bad" : warn ? "hint bad" : "hint";
+  $(hintId).textContent = problem
+    || (warn ? "The name has a size in it. Sizes belong in Pack size, not the name — take it out unless it's genuinely part of the product's name." : RULE_HINT);
+  return !!name && !problem;
+}
+function checkName() {
+  $("cr-go").disabled = !nameFeedback($("cr-name").value.trim(), "cr-name-hint");
+}
+$("cr-name").addEventListener("input", checkName);
+$("cr-go").addEventListener("click", async () => {
+  $("create-error").innerHTML = "";
+  $("cr-go").disabled = true;
+  try {
+    const standalone = createStandalone;
+    const data = await api("create_item", { body: {
+      line_id: standalone ? null : activeLine.id,
+      location_ids: standalone ? [...document.querySelectorAll("#cr-camps input:checked")].map((c) => c.value) : undefined,
+      sheet: $("cr-sheet").value,
+      category: $("cr-category").value,
+      name: $("cr-name").value.trim(),
+      item_type: $("cr-type").value,
+      standard_size: $("cr-size").value.trim(),
+    } });
+    catalogue = null; // it has a new item now
+    closeModals();
+    if (standalone) {
+      const it = data.created_item;
+      $("stock-notice").innerHTML = `<div class="notice">Created “${esc(it.name)}${it.standard_size ? " · " + esc(it.standard_size) : ""}”.</div>`;
+      $("stock-search").value = it.name;
+      drawStockList();
+    } else {
+      render(data);
+    }
+  } catch (e) {
+    $("create-error").innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    $("cr-go").disabled = false;
+  }
+});
+
+// --- Stock list and rename -------------------------------------------------
+
+let renaming = null; // the stock item the rename box is open for
+async function drawStockList() {
+  const q = $("stock-search").value.trim().toLowerCase();
+  if (!q) { $("stock-list").innerHTML = `<span class="muted">Type to search the stock list.</span>`; return; }
+  try { await ensureCatalogue(); } catch (e) { $("stock-list").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+  const words = q.split(/\s+/);
+  const hits = catalogue.filter((i) => {
+    const hay = `${i.name} ${i.category} ${i.sheet} ${i.standard_size || ""}`.toLowerCase();
+    return words.every((w) => hay.includes(w));
+  }).slice(0, 50);
+  const can = session.person.can_create_item;
+  $("stock-list").innerHTML = hits.map((i) => `<div class="creator">
+      <span><b>${esc(i.name)}</b>${i.standard_size ? ` · ${esc(i.standard_size)}` : ""} <span class="muted">· ${esc(i.sheet)} / ${esc(i.category)}${i.item_type === "variable_weight" ? " · variable weight" : ""}</span></span>
+      <span class="actions" style="margin:0">
+        ${can ? `<button type="button" class="secondary small" data-rename="${i.id}">Edit</button>
+          <button type="button" class="secondary small" data-merge="${i.id}">Merge</button>
+          <button type="button" class="secondary small" data-retire="${i.id}">Delete</button>` : ""}
+        <button type="button" class="secondary small" data-history="${i.id}">History</button>
+      </span>
+    </div>`).join("") || `<span class="muted">Nothing in the stock list matches "${esc(q)}".</span>`;
+}
+$("stock-search").addEventListener("input", drawStockList);
+$("stock-list").addEventListener("click", (ev) => {
+  const r = ev.target.closest("[data-rename]"), h = ev.target.closest("[data-history]");
+  const m = ev.target.closest("[data-merge]"), d = ev.target.closest("[data-retire]");
+  if (r) openRename(r.dataset.rename, true);
+  if (h) openRename(h.dataset.history, false);
+  if (m) openMerge(m.dataset.merge);
+  if (d) openRetire(d.dataset.retire);
+});
+
+async function openRename(id, editing) {
+  renaming = catalogue.find((i) => i.id === id);
+  $("rename-title").textContent = editing ? "Edit a stock item" : "History";
+  $("rename-item").innerHTML = `${esc(renaming.name)}${renaming.standard_size ? " · " + esc(renaming.standard_size) : ""} · ${esc(renaming.sheet)} / ${esc(renaming.category)}`;
+  $("rename-field").hidden = !editing;
+  $("rn-go").hidden = !editing;
+  $("rename-error").innerHTML = "";
+  $("rn-name").value = renaming.name;
+  $("rn-size").value = renaming.standard_size || "";
+  checkRename();
+  $("rn-history").textContent = "Loading…";
+  openModal("rename-modal");
+  if (editing) $("rn-name").focus();
+  try { drawHistory(await api("item_history", { query: `&id=${id}` })); }
+  catch (e) { $("rn-history").textContent = e.message; }
+}
+function drawHistory({ history, confirmed_lines }) {
+  const when = (t) => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  $("rn-history").innerHTML = (history.length
+    ? history.map((h) => {
+        const by = `<span class="muted">· ${esc(h.by || "")}, ${when(h.at)}</span>`;
+        if (h.what === "merged into") return `<div>Merged into “${esc(h.to)}” ${by}</div>`;
+        if (h.what === "merged in") return `<div>“${esc(h.from)}” merged into this item ${by}</div>`;
+        if (h.what === "deleted") return `<div>Deleted: ${esc(h.to)} ${by}</div>`;
+        if (h.what === "restored") return `<div>Restored ${by}</div>`;
+        return `<div>${h.what === "name" ? "Name" : "Pack size"}: “${esc(h.from ?? "none")}” → “${esc(h.to ?? "none")}” ${by}</div>`;
+      }).join("")
+    : "Never changed.")
+    + (confirmed_lines ? `<div class="reason">On ${confirmed_lines} confirmed invoice line${confirmed_lines > 1 ? "s" : ""}. They stay linked; a pack-size change means they were counted against the old size.</div>` : "");
+}
+function checkRename() {
+  const name = $("rn-name").value.trim();
+  const size = $("rn-size").value.trim();
+  const unchanged = name === renaming?.name && size === (renaming?.standard_size || "");
+  $("rn-go").disabled = !nameFeedback(name, "rn-hint") || unchanged;
+}
+$("rn-name").addEventListener("input", checkRename);
+$("rn-size").addEventListener("input", checkRename);
+$("rn-go").addEventListener("click", async () => {
+  $("rename-error").innerHTML = "";
+  $("rn-go").disabled = true;
+  try {
+    const data = await api("edit_item", { body: { stock_item_id: renaming.id, name: $("rn-name").value.trim(), standard_size: $("rn-size").value.trim() } });
+    renaming.name = data.item.name;          // the cached catalogue row, so the list shows it at once
+    renaming.standard_size = data.item.standard_size;
+    $("rename-item").innerHTML = `${esc(renaming.name)}${renaming.standard_size ? " · " + esc(renaming.standard_size) : ""} · ${esc(renaming.sheet)} / ${esc(renaming.category)}`;
+    drawHistory(data);
+    drawStockList();
+    if (current) render(await api("invoice", { query: `&id=${current.invoice.id}` })); // an open invoice shows the new name too
+    checkRename();
+  } catch (e) {
+    $("rename-error").innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    checkRename();
+  }
+});
+
+$("new-stock-item").addEventListener("click", () => { $("stock-notice").innerHTML = ""; openCreate(null); });
+
+// --- Merge and delete ------------------------------------------------------
+
+let mergeFrom = null, mergeKeep = null;
+function itemLabel(i) { return `${esc(i.name)}${i.standard_size ? " · " + esc(i.standard_size) : ""} <span class="muted">· ${esc(i.sheet)} / ${esc(i.category)}</span>`; }
+function openMerge(id) {
+  mergeFrom = catalogue.find((i) => i.id === id);
+  mergeKeep = null;
+  $("merge-from").innerHTML = `Duplicate: <b>${itemLabel(mergeFrom)}</b>`;
+  $("merge-search").value = "";
+  $("merge-list").innerHTML = `<span class="muted">Search for the item it should be.</span>`;
+  $("merge-confirm").hidden = true;
+  $("merge-error").innerHTML = "";
+  $("merge-go").disabled = true;
+  openModal("merge-modal");
+  $("merge-search").focus();
+}
+$("merge-search").addEventListener("input", () => {
+  const words = $("merge-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) { $("merge-list").innerHTML = ""; return; }
+  const hits = catalogue.filter((i) => i.id !== mergeFrom.id &&
+    words.every((w) => `${i.name} ${i.category} ${i.sheet} ${i.standard_size || ""}`.toLowerCase().includes(w))).slice(0, 30);
+  $("merge-list").innerHTML = hits.map((i) => `<button type="button" class="secondary" data-keep="${i.id}" aria-pressed="${mergeKeep?.id === i.id}">${itemLabel(i)}</button>`).join("")
+    || `<span class="muted">Nothing matches.</span>`;
+});
+$("merge-list").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-keep]");
+  if (!b) return;
+  mergeKeep = catalogue.find((i) => i.id === b.dataset.keep);
+  document.querySelectorAll("#merge-list [data-keep]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  const sizeWarn = normSizeClient(mergeFrom.standard_size) !== normSizeClient(mergeKeep.standard_size)
+    ? `<br><b>The pack sizes differ</b> (${esc(mergeFrom.standard_size || "none")} against ${esc(mergeKeep.standard_size || "none")}). The kept item's size stays — only merge if they're really the same product.` : "";
+  $("merge-confirm").innerHTML = `“${esc(mergeFrom.name)}” will be merged into <b>“${esc(mergeKeep.name)}”</b>. Every invoice line, load sheet line and camp that points at the duplicate moves to the kept item, and the duplicate leaves the stock list. This can't be undone.${sizeWarn}`;
+  $("merge-confirm").hidden = false;
+  $("merge-go").disabled = false;
+});
+function normSizeClient(v) {
+  return String(v || "").toLowerCase().replace(/^.*\d\s*x\s*(?=\d)/, "").replace(/\s+/g, "").replace(/['`’]/g, "")
+    .replace(/(litres?|liters?|lt|ltr|l)$/, "l").replace(/(kilograms?|kgs?)$/, "kg").replace(/(millilitres?|milliliters?|mls?)$/, "ml").replace(/(grams?|gms?|gr)$/, "g");
+}
+$("merge-go").addEventListener("click", async () => {
+  $("merge-error").innerHTML = "";
+  $("merge-go").disabled = true;
+  try {
+    await api("merge_items", { body: { keep_id: mergeKeep.id, merge_id: mergeFrom.id } });
+    catalogue = null;
+    closeModals();
+    await drawStockList();
+    loadRetired();
+  } catch (e) { $("merge-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; $("merge-go").disabled = false; }
+});
+
+let retiring = null;
+function openRetire(id) {
+  retiring = catalogue.find((i) => i.id === id);
+  $("retire-item").innerHTML = `<b>${itemLabel(retiring)}</b>`;
+  $("retire-reason").value = "";
+  $("retire-error").innerHTML = "";
+  openModal("retire-modal");
+  $("retire-reason").focus();
+}
+$("retire-go").addEventListener("click", async () => {
+  $("retire-error").innerHTML = "";
+  try {
+    await api("retire_item", { body: { stock_item_id: retiring.id, reason: $("retire-reason").value } });
+    catalogue = null;
+    closeModals();
+    await drawStockList();
+    loadRetired();
+  } catch (e) { $("retire-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+async function loadRetired() {
+  try {
+    const { items } = await api("retired_items");
+    const can = session.person.can_create_item;
+    const when = (t) => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    $("retired-list").innerHTML = items.map((i) => `<div class="creator">
+        <span><b>${esc(i.name)}</b>${i.standard_size ? ` · ${esc(i.standard_size)}` : ""} <span class="muted">· ${esc(i.retired_reason || "")} — ${esc(i.retirer?.name || "")}, ${when(i.retired_at)}</span></span>
+        <span class="actions" style="margin:0">
+          ${can && !i.merged_into_id ? `<button type="button" class="secondary small" data-restore="${i.id}">Restore</button>` : ""}
+        </span></div>`).join("") || `<span class="muted">Nothing deleted.</span>`;
+  } catch (e) { $("retired-list").innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+}
+$("retired-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-restore]");
+  if (!b) return;
+  $("retired-error").innerHTML = "";
+  try { await api("restore_item", { body: { stock_item_id: b.dataset.restore } }); catalogue = null; loadRetired(); drawStockList(); }
+  catch (e) { $("retired-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+// --- Who can create stock items -------------------------------------------
+
+async function loadCreators() {
+  try { drawCreators((await api("creators")).creators); }
+  catch (e) { $("creators").innerHTML = `<span class="muted">Could not load the list: ${esc(e.message)}</span>`; }
+}
+function drawCreators(list) {
+  const canEdit = session.person.can_create_item;
+  $("creators").innerHTML = list.map((g) => `<div class="creator">
+      <span><b>${esc(g.person?.name)}</b> <span class="muted">· added by ${esc(g.granter?.name || "—")}, ${new Date(g.granted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span></span>
+      ${canEdit && list.length > 1 ? `<button type="button" class="secondary small" data-revoke="${g.person?.id}">Remove</button>` : ""}
+    </div>`).join("") || `<span class="muted">Nobody.</span>`;
+}
+$("creators").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-revoke]");
+  if (!b) return;
+  if (!confirm("Remove this person from the list of people who can create stock items?")) return;
+  $("creators-error").innerHTML = "";
+  try { drawCreators((await api("revoke_creator", { body: { person_id: b.dataset.revoke } })).creators); }
+  catch (e) { $("creators-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("ca-location").addEventListener("change", async () => {
+  await fillPeople("ca-location", "ca-person", "Choose where they work first").catch((e) => $("creators-error").innerHTML = `<div class="error">${esc(e.message)}</div>`);
+  $("ca-go").disabled = true;
+});
+$("ca-person").addEventListener("change", () => { $("ca-go").disabled = !$("ca-person").value; });
+$("ca-go").addEventListener("click", async () => {
+  $("creators-error").innerHTML = "";
+  try {
+    drawCreators((await api("grant_creator", { body: { person_id: $("ca-person").value } })).creators);
+    $("ca-person").value = "";
+    $("ca-go").disabled = true;
+  } catch (e) { $("creators-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+// --- Load sheets ------------------------------------------------------------
+
+let pendingInfo = { pending: {}, drafts: {} };
+let sheetOnScreen = null; // { load_sheet, lines }
+
+async function refreshLoads() {
+  $("ls-error").innerHTML = "";
+  if (!$("ls-camp").options.length) {
+    $("ls-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  }
+  try {
+    pendingInfo = await api("load_sheet_pending");
+    drawWaiting();
+    loadRecentSheets();
+    const draft = pendingInfo.drafts[$("ls-camp").value];
+    if (draft && !sheetOnScreen) drawSheet(await api("load_sheet", { query: `&id=${draft.id}` }));
+  } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+function drawWaiting() {
+  const loc = $("ls-camp").value;
+  const n = pendingInfo.pending[loc] || 0;
+  const draft = pendingInfo.drafts[loc];
+  $("ls-waiting").textContent = n
+    ? `${n} accepted line${n > 1 ? "s" : ""} waiting for this camp.${draft ? ` They'll be added to draft load sheet ${draft.number}.` : ""}`
+    : `Nothing waiting for this camp.${draft ? ` Draft load sheet ${draft.number} is open below.` : ""}`;
+  $("ls-build").textContent = draft ? "Add to the draft" : "Build load sheet";
+  $("ls-build").disabled = !n;
+}
+$("ls-camp").addEventListener("change", async () => {
+  drawWaiting();
+  const draft = pendingInfo.drafts[$("ls-camp").value];
+  sheetOnScreen = null;
+  $("ls-card").hidden = true;
+  if (draft) drawSheet(await api("load_sheet", { query: `&id=${draft.id}` }));
+});
+$("ls-build").addEventListener("click", async () => {
+  $("ls-error").innerHTML = "";
+  $("ls-build").disabled = true;
+  try {
+    drawSheet(await api("build_load_sheet", { body: { location_id: $("ls-camp").value } }));
+    pendingInfo = await api("load_sheet_pending");
+    drawWaiting();
+    loadRecentSheets();
+  } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; drawWaiting(); }
+});
+
+async function loadRecentSheets() {
+  try {
+    const { load_sheets } = await api("load_sheets");
+    $("ls-recent").innerHTML = load_sheets.map((s) => {
+      const when = new Date(s.sent_at || s.created_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      return `<button type="button" class="secondary" data-open-sheet="${s.id}">Load sheet ${s.number} · ${esc(s.locations?.name || "")}
+        <span class="muted"> · ${s.status === "draft" ? "draft" : s.status} · ${s.load_sheet_lines?.[0]?.count ?? 0} lines · ${when}</span></button>`;
+    }).join("") || `<span class="muted">No load sheets yet.</span>`;
+  } catch (e) { $("ls-recent").innerHTML = `<span class="muted">${esc(e.message)}</span>`; }
+}
+$("ls-recent").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-open-sheet]");
+  if (!b) return;
+  try { drawSheet(await api("load_sheet", { query: `&id=${b.dataset.openSheet}` })); $("ls-card").scrollIntoView({ behavior: "smooth" }); }
+  catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+const fmtQty = (n) => Number(n).toLocaleString("en-GB", { maximumFractionDigits: 3 });
+// A supplier shortage (Nicola, 2026-10-05, D-014): the storeman's count at
+// Base differs from what the invoice charged for. Highlighted for Base —
+// it's a credit note to chase. (An order shortage — camp ordered more
+// than was sent — needs orders in the system first.)
+const supplierGap = (il) => il.handwritten_qty != null && il.printed_qty != null ? Number(il.handwritten_qty) - Number(il.printed_qty) : 0;
+const sourceText = (l) => (l.load_sheet_line_sources || []).map((s) => {
+  const il = s.invoice_lines || {};
+  const q = il.handwritten_qty ?? il.printed_qty;
+  const gap = supplierGap(il);
+  return `${esc(il.invoices?.supplier || "")} ${esc(il.invoices?.invoice_number || "")}: ${fmtQty(q ?? 0)}${il.handwritten_qty != null ? " ✎" : ""}`
+    + (gap < 0 ? ` <span class="short">supplier short ${fmtQty(-gap)} (invoiced ${fmtQty(il.printed_qty)})</span>` : "")
+    + (gap > 0 ? ` <span class="short">supplier over ${fmtQty(gap)} (invoiced ${fmtQty(il.printed_qty)})</span>` : "");
+}).join("<br>");
+
+function drawSheet(data) {
+  sheetOnScreen = data;
+  const s = data.load_sheet;
+  const draft = s.status === "draft";
+  $("ls-card").hidden = false;
+  $("ls-title").textContent = `Load sheet ${s.number} · ${s.locations?.name || ""} · ${draft ? "Draft" : s.status === "sent" ? "Sent, not yet received" : "Received"}`;
+  const when = (t) => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const shortLines = data.lines.filter((l) => (l.load_sheet_line_sources || []).some((src) => supplierGap(src.invoice_lines || {}) !== 0)).length;
+  $("ls-meta").textContent = (shortLines ? `${shortLines} line${shortLines > 1 ? "s" : ""} where Base received a different amount from the invoice — see "supplier short" below; those are credit notes to chase. ` : "") + (draft
+    ? `Built by ${s.creator?.name || ""}, ${when(s.created_at)}. Adjust or hold back lines, then send.`
+    : `Sent by ${s.sender?.name || ""}, ${when(s.sent_at)}.${data.receipt ? ` Received ${data.receipt.received_on} by ${data.receipt.receiver?.name || ""}.` : " Waiting for camp to receive it."} Locked.`);
+  let group = null;
+  const rows = [];
+  for (const l of data.lines) {
+    const it = l.stock_items;
+    const g = it ? `${it.sheet} · ${it.category}` : "Not stock — check off the truck, doesn't go into stock";
+    if (g !== group) { rows.push(`<tr class="group"><td colspan="5">${esc(g)}</td></tr>`); group = g; }
+    const adjusted = Number(l.quantity_expected) !== Number(l.quantity_from_invoices);
+    const rcv = l.receipt;
+    const rcvNote = rcv ? `<div class="${Number(rcv.quantity_received) !== Number(rcv.quantity_sent) ? "short" : "adj"}">camp received ${fmtQty(rcv.quantity_received)}${Number(rcv.quantity_received) < Number(rcv.quantity_sent) ? ` — ${fmtQty(rcv.quantity_sent - rcv.quantity_received)} short in transit, for Base to find` : Number(rcv.quantity_received) > Number(rcv.quantity_sent) ? " — more than sent" : ""}</div>${rcv.damaged ? `<div class="short">damaged${rcv.damage_note ? ": " + esc(rcv.damage_note) : ""}</div>` : ""}` : "";
+    rows.push(`<tr>
+      <td><b>${esc(it ? it.name : l.description)}</b>${rcvNote}</td>
+      <td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
+      <td class="num"><b>${fmtQty(l.quantity_expected)}</b>${adjusted ? `<div class="adj">invoices: ${fmtQty(l.quantity_from_invoices)}</div>` : ""}</td>
+      <td class="muted">${sourceText(l)}${adjusted ? `<div class="adj">${esc(l.adjust_note || "")} — ${esc(l.adjuster?.name || "")}</div>` : ""}</td>
+      <td>${draft ? `<span class="actions" style="margin:0">
+        <button type="button" class="secondary small" data-adjust="${l.id}">Adjust</button>
+        <button type="button" class="secondary small" data-hold="${l.id}">Hold back</button></span>` : ""}</td>
+    </tr>`);
+  }
+  $("ls-lines").innerHTML = rows.join("") || `<tr><td colspan="5" class="muted">No lines.</td></tr>`;
+  $("ls-bar").innerHTML = draft
+    ? `<button type="button" id="ls-send" ${data.lines.length ? "" : "disabled"}>Send load sheet</button>
+       <button type="button" class="secondary" id="ls-discard">Discard draft</button>
+       <span class="muted">Sending locks it. Discarding puts every line back to waiting.</span>`
+    : `<button type="button" id="ls-print">Print load sheet</button><span class="muted">No prices; a tick box and a blank "received" column for camp.</span>`;
+  drawPrint(data);
+}
+
+$("ls-lines").addEventListener("click", async (ev) => {
+  const adj = ev.target.closest("[data-adjust]"), hold = ev.target.closest("[data-hold]");
+  $("ls-error").innerHTML = "";
+  if (adj) {
+    activeLine = sheetOnScreen.lines.find((l) => l.id === adj.dataset.adjust);
+    $("adjust-line").textContent = activeLine.stock_items?.name || activeLine.description;
+    $("adj-qty").value = fmtQty(activeLine.quantity_expected).replace(/,/g, "");
+    $("adj-note").value = activeLine.adjust_note || "";
+    $("adjust-error").innerHTML = "";
+    openModal("adjust-modal");
+    $("adj-qty").focus();
+  }
+  if (hold) {
+    if (!confirm("Take this line off the truck? It goes back to waiting for the next load sheet.")) return;
+    try { drawSheet(await api("hold_back_line", { body: { line_id: hold.dataset.hold } })); refreshWaitingOnly(); }
+    catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  }
+});
+$("adj-go").addEventListener("click", async () => {
+  $("adjust-error").innerHTML = "";
+  try {
+    drawSheet(await api("adjust_load_sheet_line", { body: { line_id: activeLine.id, quantity: $("adj-qty").value.trim(), note: $("adj-note").value } }));
+    closeModals();
+  } catch (e) { $("adjust-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+async function refreshWaitingOnly() {
+  try { pendingInfo = await api("load_sheet_pending"); drawWaiting(); loadRecentSheets(); } catch {}
+}
+$("ls-bar").addEventListener("click", async (ev) => {
+  const id = sheetOnScreen?.load_sheet?.id;
+  $("ls-error").innerHTML = "";
+  try {
+    if (ev.target.id === "ls-send") {
+      if (!confirm("Send this load sheet? It will be locked.")) return;
+      drawSheet(await api("send_load_sheet", { body: { load_sheet_id: id } }));
+      refreshWaitingOnly();
+    }
+    if (ev.target.id === "ls-discard") {
+      if (!confirm("Discard this draft? Every line goes back to waiting.")) return;
+      await api("discard_load_sheet", { body: { load_sheet_id: id } });
+      sheetOnScreen = null;
+      $("ls-card").hidden = true;
+      refreshWaitingOnly();
+    }
+    if (ev.target.id === "ls-print") window.print();
+  } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+function drawPrint(data) {
+  const s = data.load_sheet;
+  const when = s.sent_at ? new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "not sent";
+  let group = null;
+  const rows = [];
+  for (const l of data.lines) {
+    const it = l.stock_items;
+    const g = it ? `${it.sheet} · ${it.category}` : "Not stock — check off the truck";
+    if (g !== group) { rows.push(`<tr class="group"><td colspan="5">${esc(g)}</td></tr>`); group = g; }
+    rows.push(`<tr><td class="box">☐</td><td>${esc(it ? it.name : l.description)}</td><td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
+      <td class="num">${fmtQty(l.quantity_expected)}</td><td class="num"></td></tr>`);
+  }
+  $("print-sheet").innerHTML = `
+    <h1>Bush Ways · Load sheet ${s.number} · ${esc(s.locations?.name || "")}</h1>
+    <div>Sent ${when}${s.sender?.name ? " by " + esc(s.sender.name) : ""}. Tick each line as it comes off the truck; write what actually arrived if it differs.</div>
+    <table><thead><tr><th></th><th>Item</th><th>Size</th><th class="num">Sent</th><th class="num">Received</th></tr></thead>
+    <tbody>${rows.join("")}</tbody></table>
+    <p>Checked by: ______________________ &nbsp; Date: ____________ &nbsp; Signature: ______________________</p>`;
+}
+
+// --- Receiving ---------------------------------------------------------------
+
+let receiving = null; // { load_sheet, lines, receipt }
+const rcPhotos = new Map(); // load_sheet_line_id -> data URL
+const isoToday = () => new Date(Date.now() + 2 * 3600_000).toISOString().slice(0, 10);
+const monthName = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+
+async function loadReceiving() {
+  $("rc-error").innerHTML = "";
+  try {
+    const { load_sheets } = await api("receiving");
+    $("rc-list").innerHTML = load_sheets.map((s) => {
+      const sent = new Date(s.sent_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      const r = (s.stock_receipts || [])[0];
+      return `<button type="button" class="secondary" data-rc="${s.id}">Load sheet ${s.number} · ${esc(s.locations?.name || "")}
+        <span class="muted"> · sent ${sent} · ${s.load_sheet_lines?.[0]?.count ?? 0} lines · ${s.status === "sent" ? "<b>to receive</b>" : `received ${r?.received_on ? new Date(r.received_on + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""} by ${esc(r?.receiver?.name || "")}`}</span></button>`;
+    }).join("") || `<span class="muted">Nothing sent to your camp yet.</span>`;
+  } catch (e) { $("rc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+$("rc-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-rc]");
+  if (!b) return;
+  try { openReceive(await api("load_sheet", { query: `&id=${b.dataset.rc}` })); $("rc-card").scrollIntoView({ behavior: "smooth" }); }
+  catch (e) { $("rc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+function openReceive(data) {
+  receiving = data;
+  rcPhotos.clear();
+  const s = data.load_sheet;
+  const done = s.status !== "sent";
+  const sentOn = new Date(new Date(s.sent_at).getTime() + 2 * 3600_000).toISOString().slice(0, 10);
+  $("rc-card").hidden = false;
+  $("rc-title").textContent = `Load sheet ${s.number} · ${s.locations?.name || ""} · ${done ? "Received" : "To receive"}`;
+  $("rc-meta").textContent = done
+    ? `Received ${data.receipt?.received_on || ""} by ${data.receipt?.receiver?.name || ""}, booked to ${data.receipt?.stock_period ? monthName(data.receipt.stock_period) : ""} stock.${data.receipt?.note ? " Note: " + data.receipt.note : ""}`
+    : `Sent ${new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} by ${s.sender?.name || ""}.`;
+  $("rc-tools").hidden = done;
+  $("rc-finish").hidden = done;
+  let group = null;
+  const rows = [];
+  for (const l of data.lines) {
+    const it = l.stock_items;
+    const g = it ? `${it.sheet} · ${it.category}` : "Not stock — check it off; it doesn't go into stock";
+    if (g !== group) { rows.push(`<tr class="group"><td colspan="5">${esc(g)}</td></tr>`); group = g; }
+    const r = l.receipt;
+    rows.push(done
+      ? `<tr class="${r && Number(r.quantity_received) !== Number(r.quantity_sent) ? "diff" : ""}">
+          <td><b>${esc(it ? it.name : l.description)}</b></td><td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
+          <td class="num">${fmtQty(l.quantity_expected)}</td>
+          <td class="num"><b>${r ? fmtQty(r.quantity_received) : "—"}</b>${r && canCorrect() ? `<div><button type="button" class="secondary small" data-correct="${r.id}">Correct</button></div>` : ""}</td>
+          <td>${r?.damaged ? `<span class="short">${r.damaged_quantity ? fmtQty(r.damaged_quantity) + " damaged" : "Damaged"}</span> ${esc(r.damage_note || "")}${r.damage_photo_url ? `<div><img class="thumb" src="${esc(r.damage_photo_url)}" data-photo-url="${esc(r.damage_photo_url)}" alt="Damage photo"></div>` : ""}` : ""}
+            ${(r?.stock_receipt_corrections || []).map((c) => `<div class="corr">Corrected ${fmtQty(c.old_quantity)} → ${fmtQty(c.new_quantity)} by ${esc(c.corrector?.name || "")}: ${esc(c.reason)}</div>`).join("")}</td></tr>`
+      : `<tr data-line="${l.id}">
+          <td><b>${esc(it ? it.name : l.description)}</b></td><td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
+          <td class="num">${fmtQty(l.quantity_expected)}</td>
+          <td class="num"><input type="text" inputmode="decimal" class="rc-qty" id="rcq-${l.id}" data-sent="${l.quantity_expected}" placeholder="—" aria-label="Received"></td>
+          <td><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="rcd-${l.id}" data-damage="${l.id}"> Damaged</label>
+            <div class="rc-damage" id="rcdx-${l.id}" hidden>
+              <span class="muted">List the quantity and describe the damage:</span>
+              <label class="muted" style="font-weight:400">How many are damaged? <input type="text" inputmode="decimal" class="rc-qty" id="rcdq-${l.id}"></label>
+              <input type="text" id="rcn-${l.id}" placeholder="Describe the damage, e.g. tins dented, seal broken" autocomplete="off">
+              <span id="rcp-${l.id}"><button type="button" class="secondary small" data-photo-for="${l.id}">Add photo</button></span>
+            </div></td></tr>`);
+  }
+  $("rc-lines").innerHTML = rows.join("");
+  drawExtras();
+  if (!done) {
+    $("rc-date").max = isoToday();
+    $("rc-date").min = sentOn;
+    $("rc-date").value = isoToday() < sentOn ? sentOn : isoToday();
+    $("rc-note").value = "";
+    receiving.sentOn = sentOn;
+    drawPeriod();
+    summarise();
+  }
+}
+
+function drawPeriod() {
+  const rec = $("rc-date").value, sent = receiving.sentOn;
+  const differ = rec && rec.slice(0, 7) !== sent.slice(0, 7);
+  $("rc-period-box").hidden = !differ;
+  if (differ) {
+    // D-012: the person chooses; the month sent comes first and is the default.
+    $("rc-period").innerHTML = `<option value="${sent.slice(0, 7)}-01">${monthName(sent.slice(0, 7) + "-01")} — the month it was sent</option>
+      <option value="${rec.slice(0, 7)}-01">${monthName(rec.slice(0, 7) + "-01")} — the month it arrived</option>`;
+  }
+}
+$("rc-date").addEventListener("change", drawPeriod);
+
+function summarise() {
+  if (!receiving) return;
+  let blank = 0, diff = 0, damaged = 0;
+  for (const l of receiving.lines) {
+    const v = $("rcq-" + l.id)?.value.trim();
+    if (!v) blank++;
+    else if (Number(v) !== Number(l.quantity_expected)) diff++;
+    if ($("rcd-" + l.id)?.checked) damaged++;
+    $("rcq-" + l.id)?.closest("tr").classList.toggle("diff", !!v && Number(v) !== Number(l.quantity_expected));
+  }
+  $("rc-summary").textContent = blank
+    ? `${blank} line${blank > 1 ? "s" : ""} still to count.`
+    : `${diff ? `${diff} line${diff > 1 ? "s" : ""} different from the load sheet — Base will be asked about them. ` : "Everything matches the load sheet. "}${damaged ? `${damaged} damaged.` : ""}`;
+  $("rc-confirm").disabled = blank > 0;
+}
+$("rc-all").addEventListener("click", () => {
+  for (const l of receiving.lines) { const i = $("rcq-" + l.id); if (i && !i.value.trim()) i.value = fmtQty(l.quantity_expected).replace(/,/g, ""); }
+  summarise();
+});
+$("rc-lines").addEventListener("input", summarise);
+$("rc-lines").addEventListener("change", (ev) => {
+  const d = ev.target.closest("[data-damage]");
+  if (d) { $("rcdx-" + d.dataset.damage).hidden = !d.checked; summarise(); }
+});
+$("rc-lines").addEventListener("click", (ev) => {
+  const ph = ev.target.closest("[data-photo-for]");
+  if (ph) {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "image/*";
+    input.onchange = async () => {
+      if (!input.files[0]) return;
+      const id = ph.dataset.photoFor;
+      rcPhotos.set(id, await shrink(input.files[0]));
+      drawRcPhoto(id);
+    };
+    input.click();
+  }
+  const rm = ev.target.closest("[data-photo-remove]");
+  if (rm) { rcPhotos.delete(rm.dataset.photoRemove); drawRcPhoto(rm.dataset.photoRemove); }
+  const co = ev.target.closest("[data-correct]");
+  if (co) openCorrect(co.dataset.correct);
+  const u = ev.target.closest("[data-photo-url]");
+  if (u) openViewer(u.dataset.photoUrl);
+});
+// The photo shows as soon as it's added, so camp can check it's the right
+// one and clear before confirming (Nicola, 2026-10-06).
+function drawRcPhoto(id) {
+  const url = rcPhotos.get(id);
+  $("rcp-" + id).innerHTML = url
+    ? `<img class="thumb" src="${url}" data-photo-url="${url}" alt="Damage photo"> <button type="button" class="secondary small" data-photo-for="${id}">Replace</button> <button type="button" class="secondary small" data-photo-remove="${id}">Remove</button>`
+    : `<button type="button" class="secondary small" data-photo-for="${id}">Add photo</button>`;
+}
+
+$("rc-confirm").addEventListener("click", async () => {
+  $("rc-error").innerHTML = "";
+  const lines = receiving.lines.map((l) => ({
+    load_sheet_line_id: l.id,
+    quantity_received: $("rcq-" + l.id).value.trim(),
+    damaged: $("rcd-" + l.id).checked,
+    damage_note: $("rcd-" + l.id).checked ? $("rcn-" + l.id).value : null,
+    damaged_quantity: $("rcd-" + l.id).checked ? $("rcdq-" + l.id).value.trim() : null,
+    damage_photo_data_url: $("rcd-" + l.id).checked ? rcPhotos.get(l.id) || null : null,
+  }));
+  if (lines.some((l) => !/^\d+(\.\d+)?$/.test(l.quantity_received))) {
+    $("rc-error").innerHTML = `<div class="error">Every received count must be a number, 0 or more.</div>`; return;
+  }
+  const badDamage = lines.find((l) => l.damaged && (!(Number(l.damaged_quantity) > 0) || !String(l.damage_note || "").trim()));
+  if (badDamage) { $("rc-error").innerHTML = `<div class="error">For each damaged line, say how many are damaged and describe the damage.</div>`; return; }
+  if (!confirm("Confirm this receipt? What arrived goes into the camp's stock, and the load sheet locks.")) return;
+  $("rc-confirm").disabled = true;
+  try {
+    const data = await api("confirm_receipt", { body: {
+      load_sheet_id: receiving.load_sheet.id, received_on: $("rc-date").value,
+      stock_period: $("rc-period-box").hidden ? null : $("rc-period").value,
+      note: $("rc-note").value, lines,
+    } });
+    openReceive(data);
+    loadReceiving();
+  } catch (e) { $("rc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; $("rc-confirm").disabled = false; }
+});
+
+// --- Not on the load sheet ------------------------------------------------------
+
+function drawExtras() {
+  const ex = receiving.extras || [];
+  const camp = receiving.load_sheet.locations?.name || "this camp";
+  const base = session.person.base_level;
+  $("rc-extras").innerHTML = ex.map((e) => {
+    const what = e.stock_items ? `${esc(e.stock_items.name)}${e.stock_items.standard_size ? " · " + esc(e.stock_items.standard_size) : ""}` : esc(e.description);
+    const state = e.status === "waiting" ? `<b>waiting for Base</b>`
+      : e.status === "allocated" ? `put into ${esc(e.allocated?.name || "")} stock by ${esc(e.decider?.name || "")}`
+      : `to be returned to Maun — ${esc(e.decider?.name || "")}`;
+    return `<div class="extra"><span><b>${fmtQty(e.quantity)} × ${what}</b> <span class="muted">· recorded by ${esc(e.recorder?.name || "")}${e.note ? " · " + esc(e.note) : ""} · ${state}</span>
+      ${e.photo_url ? `<div><img class="thumb" src="${esc(e.photo_url)}" data-photo-url="${esc(e.photo_url)}" alt="Photo"></div>` : ""}</span>
+      ${base && e.status === "waiting" ? `<span><button type="button" class="secondary small" data-decide="${e.id}">Decide</button></span>` : ""}</div>`;
+  }).join("") || `<span class="muted">Nothing extra recorded.</span>`;
+}
+$("rc-extras").addEventListener("click", (ev) => {
+  const d = ev.target.closest("[data-decide]");
+  if (d) openDecide(d.dataset.decide);
+  const u = ev.target.closest("[data-photo-url]");
+  if (u) openViewer(u.dataset.photoUrl);
+});
+
+let exPick = null, exPhoto = null;
+$("rc-add-extra").addEventListener("click", async () => {
+  exPick = null; exPhoto = null;
+  ["ex-search", "ex-desc", "ex-qty", "ex-note"].forEach((id) => { $(id).value = ""; });
+  $("ex-list").innerHTML = ""; $("ex-photo").innerHTML = ""; $("extra-error").innerHTML = "";
+  openModal("extra-modal");
+  try { await ensureCatalogue(); } catch (e) { $("extra-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  $("ex-search").focus();
+});
+function pickList(inputId, listId, picked) {
+  const words = $(inputId).value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length || !catalogue) { $(listId).innerHTML = ""; return; }
+  const hits = catalogue.filter((i) => words.every((w) => `${i.name} ${i.category} ${i.sheet} ${i.standard_size || ""}`.toLowerCase().includes(w))).slice(0, 20);
+  $(listId).innerHTML = hits.map((i) => `<button type="button" class="secondary" data-pick-item="${i.id}" aria-pressed="${picked?.id === i.id}">${itemLabel(i)}</button>`).join("") || `<span class="muted">Nothing matches.</span>`;
+}
+$("ex-search").addEventListener("input", () => pickList("ex-search", "ex-list", exPick));
+$("ex-list").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-pick-item]");
+  if (!b) return;
+  exPick = catalogue.find((i) => i.id === b.dataset.pickItem);
+  document.querySelectorAll("#ex-list [data-pick-item]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+});
+$("ex-photo-btn").addEventListener("click", () => {
+  const input = document.createElement("input");
+  input.type = "file"; input.accept = "image/*";
+  input.onchange = async () => {
+    if (!input.files[0]) return;
+    exPhoto = await shrink(input.files[0]);
+    $("ex-photo").innerHTML = `<img class="thumb" src="${exPhoto}" data-photo-url="${exPhoto}" alt="Photo"> <button type="button" class="secondary small" id="ex-photo-remove">Remove</button>`;
+  };
+  input.click();
+});
+$("ex-photo").addEventListener("click", (ev) => {
+  if (ev.target.id === "ex-photo-remove") { exPhoto = null; $("ex-photo").innerHTML = ""; }
+  const u = ev.target.closest("[data-photo-url]");
+  if (u) openViewer(u.dataset.photoUrl);
+});
+$("ex-go").addEventListener("click", async () => {
+  $("extra-error").innerHTML = "";
+  try {
+    openReceive(await api("add_extra", { body: {
+      load_sheet_id: receiving.load_sheet.id, stock_item_id: exPick?.id || null,
+      description: $("ex-desc").value, quantity: $("ex-qty").value.trim(), note: $("ex-note").value, photo_data_url: exPhoto,
+    } }));
+    closeModals();
+  } catch (e) { $("extra-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+let deciding = null, dcPick = null;
+async function openDecide(id) {
+  deciding = receiving.extras.find((e) => e.id === id);
+  dcPick = null;
+  $("dc-what").innerHTML = `${fmtQty(deciding.quantity)} × ${deciding.stock_items ? esc(deciding.stock_items.name) : esc(deciding.description)} — at ${esc(receiving.load_sheet.locations?.name || "")}${deciding.note ? " · " + esc(deciding.note) : ""}`;
+  $("dc-item-field").hidden = !!deciding.stock_item_id;
+  $("dc-search").value = ""; $("dc-list").innerHTML = ""; $("decide-error").innerHTML = "";
+  $("dc-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.id === deciding.location_id ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  openModal("decide-modal");
+  try { await ensureCatalogue(); } catch {}
+}
+$("dc-search").addEventListener("input", () => pickList("dc-search", "dc-list", dcPick));
+$("dc-list").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-pick-item]");
+  if (!b) return;
+  dcPick = catalogue.find((i) => i.id === b.dataset.pickItem);
+  document.querySelectorAll("#dc-list [data-pick-item]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+});
+async function decide(decision) {
+  $("decide-error").innerHTML = "";
+  try {
+    openReceive(await api("decide_extra", { body: { extra_id: deciding.id, decision, stock_item_id: dcPick?.id || null, location_id: $("dc-camp").value } }));
+    closeModals();
+  } catch (e) { $("decide-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+$("dc-allocate").addEventListener("click", () => decide("allocate"));
+$("dc-return").addEventListener("click", () => decide("return"));
+
+// --- Corrections after confirming -----------------------------------------------
+
+function canCorrect() {
+  return !!receiving && receiving.load_sheet.status === "received";
+}
+let correcting = null;
+function openCorrect(receiptLineId) {
+  const line = receiving.lines.find((l) => l.receipt?.id === receiptLineId);
+  correcting = line.receipt;
+  $("co-what").textContent = `${line.stock_items ? line.stock_items.name : line.description} — sent ${fmtQty(line.quantity_expected)}, received ${fmtQty(correcting.quantity_received)}`;
+  $("co-qty").value = ""; $("co-reason").value = ""; $("correct-error").innerHTML = "";
+  openModal("correct-modal");
+  $("co-qty").focus();
+}
+$("co-go").addEventListener("click", async () => {
+  $("correct-error").innerHTML = "";
+  try {
+    openReceive(await api("correct_receipt_line", { body: { receipt_line_id: correcting.id, new_quantity: $("co-qty").value.trim(), reason: $("co-reason").value } }));
+    closeModals();
+  } catch (e) { $("correct-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+// --- Stock on hand -------------------------------------------------------------
+
+function fillOnHandCamps() {
+  if ($("oh-camp").options.length) return;
+  $("oh-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  drawOnHand();
+}
+async function drawOnHand() {
+  $("oh-lines").innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
+  try {
+    const { items } = await api("stock_on_hand", { query: `&location_id=${$("oh-camp").value}` });
+    let group = null;
+    const rows = [];
+    for (const i of items) {
+      const g = `${i.sheet} · ${i.category}`;
+      if (g !== group) { rows.push(`<tr class="group"><td colspan="4">${esc(g)}</td></tr>`); group = g; }
+      rows.push(`<tr><td><b>${esc(i.name)}</b>${i.damaged_received ? ` <span class="short">${fmtQty(i.damaged_received)} arrived damaged</span>` : ""}</td>
+        <td>${esc(i.item_type === "variable_weight" ? "kg" : i.standard_size || "")}</td><td class="num"><b>${fmtQty(i.quantity)}</b></td>
+        <td class="muted">${new Date(i.last_movement).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</td></tr>`);
+    }
+    $("oh-lines").innerHTML = rows.join("") || `<tr><td colspan="4" class="muted">Nothing received at this camp yet.</td></tr>`;
+  } catch (e) { $("oh-lines").innerHTML = `<tr><td colspan="4" class="error">${esc(e.message)}</td></tr>`; }
+}
+$("oh-camp").addEventListener("change", drawOnHand);
+
+// --- Small helpers --------------------------------------------------------
+
+$("filters").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-filter]");
+  if (!b) return;
+  filter = b.dataset.filter;
+  document.querySelectorAll("[data-filter]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  drawLines();
+});
+
+function setBusy(on) {
+  busy = on;
+  $("camp").disabled = on;
+  $("add-page").disabled = on;
+  $("rematch").disabled = on;
+  drawPages();
+}
+function setStatus(text, spinning = false) {
+  $("status").innerHTML = (spinning ? `<span class="spinner"></span>` : "") + esc(text);
+}
+function showError(e) {
+  $("error").innerHTML = `<div class="error">${esc(e.message || e)}</div>`;
+  $("error").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+function clearError() { $("error").innerHTML = ""; }
+
+function openModal(id) { $(id).classList.add("open"); }
+function closeModals() { document.querySelectorAll(".modal-back").forEach((m) => m.classList.remove("open")); activeLine = null; }
+document.querySelectorAll(".modal-back").forEach((m) => m.addEventListener("click", (ev) => {
+  if (ev.target === m || ev.target.closest("[data-close]")) closeModals();
+}));
+
+function openViewer(src) {
+  const v = $("viewer");
+  v.querySelector("img").src = src;
+  v.classList.remove("full");
+  v.classList.add("open");
+}
+$("viewer").addEventListener("click", (ev) => {
+  if (ev.target.id === "viewer-close") return closeViewer();
+  if (ev.target.tagName === "IMG") { ev.currentTarget.classList.toggle("full"); return; }
+  closeViewer();
+});
+function closeViewer() { $("viewer").classList.remove("open"); }
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeViewer(); closeModals(); } });
+
+// --- Start ------------------------------------------------------------------
+
+(async () => {
+  try { await loadLocations(); } catch (e) { showSignInError(e); }
+  session = loadSession();
+  if (session) {
+    try { session.person = (await api("me")).me; saveSession(); startApp(); return; }
+    catch { signOut(); }
+  }
+  signOut();
+})();
+</script>
+</body>
+</html>
