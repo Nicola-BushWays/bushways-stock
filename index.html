@@ -143,7 +143,8 @@
   table.grid th, table.grid td { border: 1px solid #e3dad2; }
   table.grid th.num, table.grid td.num { text-align: right; }
   table.grid th.mid, table.grid td.mid { text-align: center; }
-  table.grid tfoot td { border-top: 2px solid var(--sand); background: var(--offwhite); }
+  .oh-total { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 16px; margin-top: 8px; padding: 10px 12px; border: 2px solid var(--sand); border-radius: 6px; background: var(--offwhite); }
+  .oh-total-figure { font-size: 18px; color: var(--forest); white-space: nowrap; font-variant-numeric: tabular-nums; }
   table.grid col.c-size { width: 90px; } table.grid col.c-num { width: 100px; } table.grid col.c-dmg { width: 34%; }
   .thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--sand); cursor: zoom-in; vertical-align: middle; }
   .extra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--sand); border-radius: 6px; background: #fff; }
@@ -394,9 +395,9 @@
       <div class="table-wrap" style="margin-top:12px">
         <table class="grid oh">
           <colgroup><col><col class="c-size"><col class="c-num"><col class="c-num"><col style="width:110px"><col style="width:120px"></colgroup>
-          <thead><tr><th>Item</th><th class="oh-size">Size</th><th class="mid">On hand</th><th class="num">Avg cost</th><th class="num">Value</th><th class="oh-last">Last received</th></tr></thead><tbody id="oh-lines"></tbody>
-          <tfoot id="oh-total"></tfoot></table>
+          <thead><tr><th>Item</th><th class="oh-size">Size</th><th class="mid">On hand</th><th class="num">Avg cost</th><th class="num">Value</th><th class="oh-last">Last received</th></tr></thead><tbody id="oh-lines"></tbody></table>
         </div>
+        <div class="oh-total" id="oh-total" hidden></div>
         <p class="muted" style="margin-top:6px">Pula, excluding VAT. Average cost is weighted: every delivery moves it, the way Base values stock today.</p>
         <div>
       </div>
@@ -2093,7 +2094,7 @@ async function ensureLocations() {
 const NO_CAMPS = "Couldn't load the list of camps. Check your signal, then try again.";
 async function fillOnHandCamps() {
   if ($("oh-camp").options.length) return;
-  $("oh-total").innerHTML = "";
+  $("oh-total").hidden = true;
   $("oh-lines").innerHTML = `<tr><td colspan="6" class="muted">Loading camps…</td></tr>`;
   try { await ensureLocations(); }
   catch {
@@ -2109,8 +2110,11 @@ async function drawOnHand() {
   $("oh-lines").innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
   try {
     const { items, total_value_excl, uncosted_items } = await api("stock_on_hand", { query: `&location_id=${$("oh-camp").value}` });
+    // Its own line, not a table row: a phone hides columns, and a row spanning
+    // them pushed the figure off the screen (Nicola, 2026-10-30).
+    $("oh-total").hidden = !items.length;
     $("oh-total").innerHTML = items.length
-      ? `<tr><td colspan="4"><b>Total value of stock</b>${uncosted_items ? `<div class="muted">${uncosted_items} item${uncosted_items > 1 ? "s" : ""} with no cost yet, not included</div>` : ""}</td><td class="num"><b>P ${money(total_value_excl)}</b></td><td class="oh-last"></td></tr>` : "";
+      ? `<span><b>Total value of stock</b>${uncosted_items ? `<div class="muted">${uncosted_items} item${uncosted_items > 1 ? "s" : ""} with no cost yet, not included</div>` : ""}</span><b class="oh-total-figure">P ${money(total_value_excl)}</b>` : "";
     let group = null;
     const rows = [];
     for (const i of items) {
