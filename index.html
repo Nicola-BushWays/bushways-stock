@@ -135,6 +135,7 @@
   .pick-list { max-height: 50vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
   .pick-list button { text-align: left; }
   .pick-list button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
+  .read-warning { margin-bottom: 10px; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); font-weight: 600; font-size: 14px; }
   .note-box { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); font-size: 14px; }
   .suggest { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
   .short { color: var(--bad); font-weight: 600; }
@@ -220,7 +221,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-10-30b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-10-30c</p>
 </header>
 
 <main>
@@ -282,7 +283,12 @@
 
     <section class="card" id="result" hidden>
       <h2>2. What the tool read</h2>
+      <div id="read-warnings"></div>
       <div class="summary" id="summary"></div>
+      <div class="actions" style="margin-top:10px">
+        <button type="button" class="secondary small" id="edit-details">Correct invoice details</button>
+        <button type="button" class="secondary small" id="discard-read">Discard this read</button>
+      </div>
     </section>
 
     <section class="card" id="lines-card" hidden>
@@ -501,6 +507,22 @@
     <div class="buttons">
       <button type="button" class="secondary" data-close>Cancel</button>
       <button type="button" id="adj-go">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Correct what was read off the top of the invoice -->
+<div class="modal-back" id="edit-details-modal">
+  <div class="modal">
+    <h3>Correct invoice details</h3>
+    <p class="muted">Only the details at the top of the invoice; no line or stock changes.</p>
+    <div class="field"><label for="ed-supplier">Supplier</label><input type="text" id="ed-supplier" autocomplete="off"></div>
+    <div class="field"><label for="ed-number">Invoice number</label><input type="text" id="ed-number" autocomplete="off" placeholder="e.g. 54#130813"></div>
+    <div class="field"><label for="ed-date">Invoice date</label><input type="text" id="ed-date" autocomplete="off" placeholder="e.g. 27/10/2026"></div>
+    <div id="edit-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="ed-go">Save</button>
     </div>
   </div>
 </div>
@@ -990,7 +1012,7 @@ function render(data) {
   const tiles = [
     ["Supplier", inv.supplier || "not read"],
     ["Invoice number", inv.invoice_number || "not read"],
-    ["Date", inv.invoice_date_printed || "not read"],
+    ["Date", inv.invoice_date ? new Date(inv.invoice_date + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : (inv.invoice_date_printed || "not read")],
     ["Camp", inv.locations?.name || ""],
     ["Printed total", r.checked ? `BWP ${money(r.printed_total)}` : "none found"],
     ["Lines add up to", `BWP ${money(inv.lines_total_incl)}`],
@@ -1012,8 +1034,11 @@ function render(data) {
     checkTile + matchTile + stateTile +
     (data.reallocated_count ? `<div class="tile"><div class="k">For other camps</div><div class="v">${data.reallocated_count} line${data.reallocated_count > 1 ? "s" : ""}</div></div>` : "") +
     `<div class="tile"><div class="k">Cost of this read</div><div class="v">$${cost.toFixed(3)}</div></div>` +
-    (inv.photo_urls || [inv.photo_url]).filter(Boolean).map((u, i) =>
-      `<div class="tile"><div class="k">Photo</div><div class="v"><button type="button" class="secondary small" data-photo="${esc(u)}">View page ${i + 1}</button></div></div>`).join("");
+    (inv.photo_urls || [inv.photo_url]).map((u, i) => !u ? "" :
+      `<div class="tile"><div class="k">Photo ${i + 1}</div><div class="v"><button type="button" class="secondary small" data-photo="${esc(u)}">View</button>
+        ${!locked() && (inv.photo_urls || []).filter(Boolean).length > 1 ? `<button type="button" class="secondary small" data-split="${i + 1}">Different invoice</button>` : ""}</div></div>`).join("");
+  $("read-warnings").innerHTML = (data.read_warnings || []).map((w) => `<div class="read-warning">⚠ ${esc(w)}</div>`).join("");
+  $("discard-read").hidden = locked();
 
   $("result").hidden = false;
   $("lines-card").hidden = false;
@@ -1023,9 +1048,50 @@ function render(data) {
   drawAcceptBar();
 }
 
-$("summary").addEventListener("click", (ev) => {
+$("summary").addEventListener("click", async (ev) => {
   const b = ev.target.closest("[data-photo]");
   if (b) openViewer(b.dataset.photo);
+  const sp = ev.target.closest("[data-split]");
+  if (!sp) return;
+  // Moves that photo and its lines to an invoice of their own; decisions travel with them.
+  if (!confirm(`Move photo ${sp.dataset.split} and its lines to their own invoice? Your decisions on those lines stay with them, and both invoices' totals are worked out again.`)) return;
+  clearError();
+  try {
+    const data = await api("split_invoice", { body: { invoice_id: current.invoice.id, page_no: Number(sp.dataset.split) } });
+    render(data);
+    await loadRecent();
+    setStatus("Moved to its own invoice — open it under Recent reads.");
+  } catch (e) { showError(e); }
+});
+$("discard-read").addEventListener("click", async () => {
+  if (!current) return;
+  if (!confirm("Discard this read? It and its lines are deleted, so any decisions made on it go too. Items you created from it stay in the stock list.")) return;
+  clearError();
+  try {
+    await api("discard_invoice", { body: { invoice_id: current.invoice.id } });
+    current = null;
+    $("result").hidden = true;
+    $("lines-card").hidden = true;
+    await loadRecent();
+    setStatus("Read discarded.");
+    $("capture").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { showError(e); }
+});
+$("edit-details").addEventListener("click", () => {
+  const inv = current.invoice;
+  $("ed-supplier").value = inv.supplier || "";
+  $("ed-number").value = inv.invoice_number || "";
+  $("ed-date").value = inv.invoice_date ? inv.invoice_date.split("-").reverse().join("/") : (inv.invoice_date_printed || "");
+  $("edit-error").innerHTML = "";
+  openModal("edit-details-modal");
+});
+$("ed-go").addEventListener("click", async () => {
+  $("edit-error").innerHTML = "";
+  try {
+    render(await api("edit_invoice_details", { body: { invoice_id: current.invoice.id, supplier: $("ed-supplier").value, invoice_number: $("ed-number").value, invoice_date: $("ed-date").value } }));
+    closeModals();
+    loadRecent();
+  } catch (e) { $("edit-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 });
 
 function statusChip(l) {
