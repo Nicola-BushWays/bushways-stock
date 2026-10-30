@@ -749,8 +749,19 @@ async function api(action, { body, query = "" } = {}) {
 function saveSession() { try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(session)); } catch {} }
 function loadSession() { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch { return null; } }
 
+// The camp list fills every camp box. On a weak signal the request can fail,
+// and a saved sign-in still lets the person in, so it can't be a one-time
+// ask: it retries here, and ensureLocations() asks again whenever a screen
+// needs it (found on Nicola's phone, 2026-10-30).
 async function loadLocations() {
-  const data = await api("locations");
+  let data;
+  for (let attempt = 1; ; attempt++) {
+    try { data = await api("locations"); break; }
+    catch (e) {
+      if (attempt >= 3) throw e;
+      await new Promise((r) => setTimeout(r, attempt * 1000));
+    }
+  }
   locations = data.locations;
   const opts = locations.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
   $("si-location").innerHTML = `<option value="">Choose…</option>` + opts;
@@ -807,6 +818,7 @@ function startApp() {
   $("who-extra").textContent = session.person.can_create_item ? "· can create stock items" : "";
   $("creator-add").hidden = !session.person.can_create_item;
   $("new-stock-item").hidden = !session.person.can_create_item;
+  ensureLocations().catch(() => showError(new Error(NO_CAMPS + " Reload the page to try again.")));
   loadRecent();
   loadCreators();
   showView("invoices");
@@ -1132,7 +1144,8 @@ $("lines").addEventListener("click", async (ev) => {
   } catch (e) { showError(e); b.disabled = false; }
 });
 
-function openRealloc(line) {
+async function openRealloc(line) {
+  try { await ensureLocations(); } catch { return showError(new Error(NO_CAMPS)); }
   activeLine = line;
   $("realloc-line").innerHTML = lineSummary(line);
   $("realloc-error").innerHTML = "";
@@ -1201,6 +1214,7 @@ async function openCreate(line) {
   $("cr-camps-field").hidden = !!line;
   $("cr-go").textContent = line ? "Create and use this item" : "Create item";
   if (!line) {
+    try { await ensureLocations(); } catch { $("create-error").innerHTML = `<div class="error">${NO_CAMPS}</div>`; }
     $("cr-camps").innerHTML = locations.map((l) =>
       `<label style="display:inline-flex;gap:4px;align-items:center;font-weight:400;margin-right:10px"><input type="checkbox" value="${l.id}"> ${esc(l.name)}</label>`).join("");
   }
@@ -1558,6 +1572,11 @@ let sheetOnScreen = null; // { load_sheet, lines }
 async function refreshLoads() {
   $("ls-error").innerHTML = "";
   if (!$("ls-camp").options.length) {
+    try { await ensureLocations(); }
+    catch {
+      $("ls-error").innerHTML = `<div class="error">${NO_CAMPS} <button type="button" class="secondary small" id="ls-retry">Try again</button></div>`;
+      return;
+    }
     $("ls-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   }
   try {
@@ -1578,6 +1597,7 @@ function drawWaiting() {
   $("ls-build").textContent = draft ? "Add to the draft" : "Build load sheet";
   $("ls-build").disabled = !n;
 }
+$("ls-error").addEventListener("click", (ev) => { if (ev.target.id === "ls-retry") refreshLoads(); });
 $("ls-camp").addEventListener("change", async () => {
   drawWaiting();
   const draft = pendingInfo.drafts[$("ls-camp").value];
@@ -2001,6 +2021,7 @@ $("ex-go").addEventListener("click", async () => {
 
 let deciding = null, dcPick = null;
 async function openDecide(id) {
+  try { await ensureLocations(); } catch { $("rc-error").innerHTML = `<div class="error">${NO_CAMPS}</div>`; return; }
   deciding = receiving.extras.find((e) => e.id === id);
   dcPick = null;
   $("dc-what").innerHTML = `${fmtQty(deciding.quantity)} × ${deciding.stock_items ? esc(deciding.stock_items.name) : esc(deciding.description)} — at ${esc(receiving.load_sheet.locations?.name || "")}${deciding.note ? " · " + esc(deciding.note) : ""}`;
@@ -2065,12 +2086,26 @@ $("co-go").addEventListener("click", async () => {
 
 // --- Stock on hand -------------------------------------------------------------
 
-function fillOnHandCamps() {
+async function ensureLocations() {
+  if (!locations.length) await loadLocations();
+  return locations;
+}
+const NO_CAMPS = "Couldn't load the list of camps. Check your signal, then try again.";
+async function fillOnHandCamps() {
   if ($("oh-camp").options.length) return;
+  $("oh-total").innerHTML = "";
+  $("oh-lines").innerHTML = `<tr><td colspan="6" class="muted">Loading camps…</td></tr>`;
+  try { await ensureLocations(); }
+  catch {
+    $("oh-lines").innerHTML = `<tr><td colspan="6">${NO_CAMPS} <button type="button" class="secondary small" id="oh-retry">Try again</button></td></tr>`;
+    return;
+  }
   $("oh-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   drawOnHand();
 }
+$("oh-lines").addEventListener("click", (ev) => { if (ev.target.id === "oh-retry") fillOnHandCamps(); });
 async function drawOnHand() {
+  if (!$("oh-camp").value) return; // never ask the server about "no camp"
   $("oh-lines").innerHTML = `<tr><td colspan="4" class="muted">Loading…</td></tr>`;
   try {
     const { items, total_value_excl, uncosted_items } = await api("stock_on_hand", { query: `&location_id=${$("oh-camp").value}` });
@@ -2143,7 +2178,7 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeV
 // --- Start ------------------------------------------------------------------
 
 (async () => {
-  try { await loadLocations(); } catch (e) { showSignInError(e); }
+  try { await loadLocations(); } catch { showSignInError(new Error(NO_CAMPS + " Reload the page to try again.")); }
   session = loadSession();
   if (session) {
     try { session.person = (await api("me")).me; saveSession(); startApp(); return; }
