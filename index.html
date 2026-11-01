@@ -156,6 +156,15 @@
   table.ss .ss-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   table.ss .ss-item { position: sticky; left: 0; background: #fff; min-width: 130px; max-width: 170px; z-index: 1; }
   table.ss thead .ss-item { background: #fff; }
+  .ss-phone, .ss-phone-block { display: none; }
+  @media (max-width: 640px) {
+    table.ss { min-width: 0; width: 100%; font-size: 12px; }
+    table.ss th, table.ss td { padding: 5px 4px; }
+    table.ss .ss-item { position: static; min-width: 0; max-width: none; }
+    .ss-wide, .ss-wide-block { display: none; }
+    th.ss-phone, td.ss-phone { display: table-cell; }
+    .ss-phone-block { display: block; }
+  }
   table.ss tr.ss-cat td { background: var(--offwhite); font-weight: 900; color: var(--forest); font-size: 12px; }
   table.ss tr.ss-row { cursor: pointer; }
   table.ss tr.ss-detail td { background: #fbf8f4; font-size: 12px; }
@@ -250,7 +259,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01i</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01j</p>
 </header>
 
 <main>
@@ -496,9 +505,10 @@
     <section class="card" id="ss-card" hidden>
       <h2 id="ss-title"></h2>
       <div class="table-wrap"><table class="ss"><thead><tr>
-        <th class="ss-item">Item</th><th class="ss-num">Open</th><th class="ss-num">Open value</th><th class="ss-num">Rec'd</th><th class="ss-num">In</th><th class="ss-num">Out</th><th class="ss-num">Ret'd</th><th class="ss-num">Expected</th><th class="ss-num">Avg price</th><th class="ss-num">Value</th>
+        <th class="ss-item">Item</th><th class="ss-num">Open</th><th class="ss-num ss-wide">Open value</th><th class="ss-num ss-wide">Rec'd</th><th class="ss-num ss-wide">Trans in</th><th class="ss-num ss-wide">Trans out</th><th class="ss-num ss-wide">Ret'd</th><th class="ss-num ss-phone">In</th><th class="ss-num ss-phone">Out</th><th class="ss-num">Close</th><th class="ss-num ss-wide">Avg price</th><th class="ss-num">Value</th>
       </tr></thead><tbody id="ss-lines"></tbody></table></div>
-      <p class="muted" style="margin-top:6px">Rec'd: deliveries. In and Out: transfers. Ret'd: sent back to Maun. Tap an item to see what's behind it.</p>
+      <p class="muted ss-wide-block" style="margin-top:6px">Rec'd: deliveries. Trans in and out: transfers. Ret'd: sent back to Maun. Close: what should be there; the count comes with the stock take. Tap an item to see what's behind it.</p>
+      <p class="muted ss-phone-block" style="margin-top:6px">In: deliveries and transfers in. Out: transfers out and returns. Close: what should be there. Value shows the average price under it. Tap an item to see what's behind it; a computer shows every column.</p>
       <div class="oh-total"><b>Total value of stock</b><b class="oh-total-figure" id="ss-total"></b></div>
       <div id="ss-transit"></div>
     </section>
@@ -3026,19 +3036,22 @@ function drawSsTab() {
   let cat = null;
   const out = [];
   rows.forEach((r, i) => {
-    if (r.category !== cat) { out.push(`<tr class="ss-cat"><td class="ss-item">${esc(r.category)}</td><td colspan="9"></td></tr>`); cat = r.category; }
+    if (r.category !== cat) { out.push(`<tr class="ss-cat"><td colspan="14">${esc(r.category)}</td></tr>`); cat = r.category; }
     const size = r.item_type === "variable_weight" ? "kg" : r.standard_size || "";
     out.push(`<tr class="ss-row" data-ss-row="${i}">
       <td class="ss-item"><b>${esc(r.name)}</b>${size ? `<div class="muted">${esc(size)}</div>` : ""}</td>
-      <td class="ss-num">${q(r.open_qty)}</td><td class="ss-num">${money0(r.open_value)}</td><td class="ss-num">${q(r.received)}</td><td class="ss-num">${q(r.transfers_in)}</td>
-      <td class="ss-num">${q(r.transfers_out)}</td><td class="ss-num">${q(r.returned)}</td><td class="ss-num"><b>${q(r.close_qty) || "0"}</b></td>
-      <td class="ss-num">${r.close_avg == null ? "—" : money(r.close_avg)}</td><td class="ss-num">${money0(r.close_value)}</td></tr>`);
+      <td class="ss-num">${q(r.open_qty)}</td><td class="ss-num ss-wide">${money0(r.open_value)}</td><td class="ss-num ss-wide">${q(r.received)}</td><td class="ss-num ss-wide">${q(r.transfers_in)}</td>
+      <td class="ss-num ss-wide">${q(r.transfers_out)}</td><td class="ss-num ss-wide">${q(r.returned)}</td>
+      <td class="ss-num ss-phone">${q(r.received + r.transfers_in)}</td><td class="ss-num ss-phone">${q(r.transfers_out + r.returned)}</td>
+      <td class="ss-num"><b>${q(r.close_qty) || "0"}</b></td>
+      <td class="ss-num ss-wide">${r.close_avg == null ? "—" : money(r.close_avg)}</td>
+      <td class="ss-num">${money0(r.close_value)}<div class="muted ss-phone-block">${r.close_avg == null ? "" : "@ " + money(r.close_avg)}</div></td></tr>`);
   });
   const camp = $("ss-camp").selectedOptions[0].text, month = $("ss-month").selectedOptions[0].text;
   const t = ssData.by_sheet[ssTab] || { open_value: 0, close_value: 0 };
   $("ss-card").hidden = false;
   $("ss-title").textContent = `${camp} · ${month} · ${ssTab}`;
-  $("ss-lines").innerHTML = out.join("") || `<tr><td class="ss-item" colspan="10"><span class="muted">Nothing on this sheet for this month.</span></td></tr>`;
+  $("ss-lines").innerHTML = out.join("") || `<tr><td colspan="14"><span class="muted">Nothing on this sheet for this month.</span></td></tr>`;
   $("ss-total").innerHTML = `${esc(ssTab)}: P ${money(t.close_value)}<br>All sheets: P ${money(ssData.total.close_value)}`;
   $("ss-transit").innerHTML = ssData.in_transit.length
     ? `<div class="extra" style="margin-top:8px;display:block"><b>Stock in transit at the end of this month</b><div class="muted">Sent, not yet booked to this month; not in the figures above.</div>${ssData.in_transit.map((x) => `<div>${esc(x.what)}: P ${money(x.value)}</div>`).join("")}<div><b>With stock in transit: P ${money(ssData.total.close_value + ssData.in_transit_value)}</b></div></div>` : "";
@@ -3061,7 +3074,7 @@ $("ss-lines").addEventListener("click", (ev) => {
   const r = ssData.rows.filter((x) => x.sheet === ssTab)[Number(row.dataset.ssRow)];
   const tr = document.createElement("tr");
   tr.className = "ss-detail";
-  tr.innerHTML = `<td colspan="10">${r.moves.map((m) => `<div>${new Date(m.on).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${esc(SS_REASON[m.reason] || m.reason)} · ${m.quantity > 0 ? "+" : ""}${fmtQty(m.quantity)}${m.cost == null ? "" : ` at P ${money(m.cost)}`}</div>`).join("") || "No movements this month."}</td>`;
+  tr.innerHTML = `<td colspan="14">${r.moves.map((m) => `<div>${new Date(m.on).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${esc(SS_REASON[m.reason] || m.reason)} · ${m.quantity > 0 ? "+" : ""}${fmtQty(m.quantity)}${m.cost == null ? "" : ` at P ${money(m.cost)}`}</div>`).join("") || "No movements this month."}</td>`;
   row.after(tr);
 });
 
