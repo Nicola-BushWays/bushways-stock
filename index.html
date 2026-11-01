@@ -156,6 +156,11 @@
   table.ss .ss-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   table.ss .ss-item { position: sticky; left: 0; background: #fff; min-width: 130px; max-width: 170px; z-index: 1; }
   table.ss thead .ss-item { background: #fff; }
+  table.ss .ss-tight { width: 42px; min-width: 42px; white-space: normal; line-height: 1.15; font-size: 11px; }
+  table.ss td.ss-tight { font-size: 13px; }
+  table.ss .ss-del { font-size: 11px; line-height: 1.2; white-space: normal; min-width: 66px; text-align: right; }
+  table.ss td.ss-del { font-size: 13px; }
+  table.ss .ss-other { white-space: nowrap; color: var(--warn); }
   .ss-phone, .ss-phone-block { display: none; }
   @media (max-width: 640px) {
     table.ss { min-width: 0; width: 100%; font-size: 12px; }
@@ -164,6 +169,12 @@
     .ss-wide, .ss-wide-block { display: none; }
     th.ss-phone, td.ss-phone { display: table-cell; }
     .ss-phone-block { display: block; }
+    /* Show each delivery needs every column: it scrolls, the item stays put. */
+    table.ss.ss-full { min-width: 560px; width: auto; }
+    table.ss.ss-full .ss-item { position: sticky; left: 0; background: #fff; min-width: 120px; max-width: 150px; }
+    table.ss.ss-full .ss-wide { display: table-cell; }
+    table.ss.ss-full .ss-phone, table.ss.ss-full .ss-phone-block { display: none; }
+    table.ss.ss-full tr.ss-row td { background: #fff; }
   }
   table.ss tr.ss-cat td { background: var(--offwhite); font-weight: 900; color: var(--forest); font-size: 12px; }
   table.ss tr.ss-row { cursor: pointer; }
@@ -259,7 +270,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01j</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01k</p>
 </header>
 
 <main>
@@ -497,20 +508,21 @@
       <div class="row">
         <div><label for="ss-camp">Camp</label><select id="ss-camp"></select></div>
         <div><label for="ss-month">Month</label><select id="ss-month"></select></div>
-        <div><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="ss-all"> Show all this camp's items</label></div>
+        <div><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="ss-all"> Show all this camp's items</label>
+          <label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="ss-split"> Show each delivery</label></div>
+        <div><button type="button" class="secondary" id="ss-export">Export to Excel</button></div>
       </div>
       <div class="filters" id="ss-tabs" style="margin-top:12px"></div>
       <div id="ss-error"></div>
     </section>
     <section class="card" id="ss-card" hidden>
       <h2 id="ss-title"></h2>
-      <div class="table-wrap"><table class="ss"><thead><tr>
-        <th class="ss-item">Item</th><th class="ss-num">Open</th><th class="ss-num ss-wide">Open value</th><th class="ss-num ss-wide">Rec'd</th><th class="ss-num ss-wide">Trans in</th><th class="ss-num ss-wide">Trans out</th><th class="ss-num ss-wide">Ret'd</th><th class="ss-num ss-phone">In</th><th class="ss-num ss-phone">Out</th><th class="ss-num">Close</th><th class="ss-num ss-wide">Avg price</th><th class="ss-num">Value</th>
-      </tr></thead><tbody id="ss-lines"></tbody></table></div>
-      <p class="muted ss-wide-block" style="margin-top:6px">Rec'd: deliveries. Trans in and out: transfers. Ret'd: sent back to Maun. Close: what should be there; the count comes with the stock take. Tap an item to see what's behind it.</p>
-      <p class="muted ss-phone-block" style="margin-top:6px">In: deliveries and transfers in. Out: transfers out and returns. Close: what should be there. Value shows the average price under it. Tap an item to see what's behind it; a computer shows every column.</p>
+      <div class="table-wrap"><table class="ss" id="ss-table"><thead><tr id="ss-head"></tr></thead><tbody id="ss-lines"></tbody></table></div>
+      <p class="muted ss-wide-block" style="margin-top:6px">Rec'd: deliveries. Trans in and out: transfers. Ret'd: sent back to Maun. Current: what should be there; the count comes with the stock take. Tap an item to see what's behind it.</p>
+      <p class="muted ss-phone-block" style="margin-top:6px">In: deliveries and transfers in. Out: transfers out and returns. Current: what should be there. Value shows the average price under it. Tap an item to see what's behind it; a computer shows every column.</p>
       <div class="oh-total"><b>Total value of stock</b><b class="oh-total-figure" id="ss-total"></b></div>
       <div id="ss-transit"></div>
+      <div id="ss-invoices"></div>
     </section>
    </div>
 
@@ -790,6 +802,15 @@
         <label for="rn-size">Pack size</label>
         <input type="text" id="rn-size" autocomplete="off" placeholder="e.g. 5L, 410g, 24's">
         <div class="hint" id="rn-size-hint">If the size is in the name, move it here.</div>
+      </div>
+      <div class="field">
+        <label for="rn-sheet">Sheet</label>
+        <select id="rn-sheet"><option>Dry</option><option>Meat and Dairy</option><option>Bar</option><option>Cleaning</option></select>
+      </div>
+      <div class="field">
+        <label for="rn-category">Category</label>
+        <select id="rn-category"></select>
+        <input type="text" id="rn-category-new" autocomplete="off" placeholder="New category name, e.g. DAIRY" style="margin-top:6px" hidden>
       </div>
       <div class="field">
         <label for="rn-vat">VAT</label>
@@ -1693,6 +1714,8 @@ async function openRename(id, editing) {
   $("rn-name").value = renaming.name;
   $("rn-size").value = renaming.standard_size || "";
   $("rn-vat").value = String(renaming.vat_rate ?? 14);
+  $("rn-sheet").value = renaming.sheet;
+  fillRnCategories(renaming.category);
   checkRename();
   $("rn-history").textContent = "Loading…";
   openModal("rename-modal");
@@ -1710,16 +1733,30 @@ function drawHistory({ history, confirmed_lines }) {
         if (h.what === "deleted") return `<div>Deleted: ${esc(h.to)} ${by}</div>`;
         if (h.what === "restored") return `<div>Restored ${by}</div>`;
         if (h.what === "VAT rate") return `<div>VAT: ${esc(h.from)} → ${esc(h.to)} ${by}</div>`;
+        if (h.what === "sheet" || h.what === "category") return `<div>${h.what === "sheet" ? "Sheet" : "Category"}: “${esc(h.from)}” → “${esc(h.to)}” ${by}</div>`;
         return `<div>${h.what === "name" ? "Name" : "Pack size"}: “${esc(h.from ?? "none")}” → “${esc(h.to ?? "none")}” ${by}</div>`;
       }).join("")
     : "Never changed.")
     + (confirmed_lines ? `<div class="reason">On ${confirmed_lines} confirmed invoice line${confirmed_lines > 1 ? "s" : ""}. They stay linked; a pack-size change means they were counted against the old size.</div>` : "");
 }
+// Categories on the chosen sheet, or a new one: moving long-life milk to Dry
+// needed a DAIRY category that Dry didn't have.
+function fillRnCategories(preferred) {
+  const cats = [...new Set(catalogue.filter((i) => i.sheet === $("rn-sheet").value).map((i) => i.category))].sort();
+  if (preferred && !cats.includes(preferred) && $("rn-sheet").value === renaming?.sheet) cats.push(preferred);
+  $("rn-category").innerHTML = cats.map((c) => `<option ${c === preferred ? "selected" : ""}>${esc(c)}</option>`).join("") + `<option value="__new">+ New category…</option>`;
+  $("rn-category-new").value = "";
+  $("rn-category-new").hidden = $("rn-category").value !== "__new";
+}
+const rnCategory = () => $("rn-category").value === "__new" ? $("rn-category-new").value.trim() : $("rn-category").value;
+$("rn-sheet").addEventListener("change", () => { fillRnCategories(); checkRename(); });
+$("rn-category").addEventListener("change", () => { $("rn-category-new").hidden = $("rn-category").value !== "__new"; checkRename(); });
+$("rn-category-new").addEventListener("input", () => checkRename());
 function checkRename() {
   const name = $("rn-name").value.trim();
   const size = $("rn-size").value.trim();
-  const unchanged = name === renaming?.name && size === (renaming?.standard_size || "") && $("rn-vat").value === String(renaming?.vat_rate ?? 14);
-  $("rn-go").disabled = !nameFeedback(name, "rn-hint") || unchanged;
+  const unchanged = name === renaming?.name && size === (renaming?.standard_size || "") && $("rn-vat").value === String(renaming?.vat_rate ?? 14) && $("rn-sheet").value === renaming?.sheet && rnCategory() === renaming?.category;
+  $("rn-go").disabled = !nameFeedback(name, "rn-hint") || unchanged || !rnCategory();
 }
 $("rn-name").addEventListener("input", checkRename);
 $("rn-size").addEventListener("input", checkRename);
@@ -1728,10 +1765,13 @@ $("rn-go").addEventListener("click", async () => {
   $("rename-error").innerHTML = "";
   $("rn-go").disabled = true;
   try {
-    const data = await api("edit_item", { body: { stock_item_id: renaming.id, name: $("rn-name").value.trim(), standard_size: $("rn-size").value.trim(), vat_rate: Number($("rn-vat").value) } });
+    const data = await api("edit_item", { body: { stock_item_id: renaming.id, name: $("rn-name").value.trim(), standard_size: $("rn-size").value.trim(), vat_rate: Number($("rn-vat").value), sheet: $("rn-sheet").value, category: rnCategory() } });
     renaming.name = data.item.name;          // the cached catalogue row, so the list shows it at once
     renaming.standard_size = data.item.standard_size;
     renaming.vat_rate = data.item.vat_rate;
+    renaming.sheet = data.item.sheet;
+    renaming.category = data.item.category;
+    fillRnCategories(renaming.category);
     $("rename-item").innerHTML = `${esc(renaming.name)}${renaming.standard_size ? " · " + esc(renaming.standard_size) : ""} · ${esc(renaming.sheet)} / ${esc(renaming.category)}`;
     drawHistory(data);
     drawStockList();
@@ -3031,17 +3071,29 @@ async function drawStockSheet() {
 }
 function drawSsTab() {
   const rows = ssData.rows.filter((r) => r.sheet === ssTab);
+  const split = $("ss-split").checked;
+  // Default: one Rec'd total. "Show each delivery" adds a column per invoice.
+  const dels = split ? (ssData.deliveries || []).filter((d) => rows.some((r) => r.by_delivery?.[d.id])) : [];
+  const other = split && rows.some((r) => r.received_other);
+  const dayOf = (x) => x ? new Date(x + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
+  $("ss-table").classList.toggle("ss-full", split);
+  $("ss-head").innerHTML = `<th class="ss-item">Item</th><th class="ss-num">Open</th><th class="ss-num ss-wide">Open value</th><th class="ss-num ss-wide">Rec'd</th>`
+    + dels.map((d) => `<th class="ss-del">${esc(dayOf(d.received_on))}<br>${esc(d.invoice_number || "no number")}</th>`).join("")
+    + (other ? `<th class="ss-num ss-other">Other</th>` : "")
+    + `<th class="ss-num ss-wide ss-tight">Trans in</th><th class="ss-num ss-wide ss-tight">Trans out</th><th class="ss-num ss-wide">Ret'd</th><th class="ss-num ss-phone">In</th><th class="ss-num ss-phone">Out</th><th class="ss-num">Current</th><th class="ss-num ss-wide">Avg price</th><th class="ss-num">Value</th>`;
   const q = (n) => n ? fmtQty(n) : "";
   const money0 = (n) => n ? money(n) : "";
   let cat = null;
   const out = [];
   rows.forEach((r, i) => {
-    if (r.category !== cat) { out.push(`<tr class="ss-cat"><td colspan="14">${esc(r.category)}</td></tr>`); cat = r.category; }
+    if (r.category !== cat) { out.push(`<tr class="ss-cat"><td colspan="40">${esc(r.category)}</td></tr>`); cat = r.category; }
     const size = r.item_type === "variable_weight" ? "kg" : r.standard_size || "";
     out.push(`<tr class="ss-row" data-ss-row="${i}">
       <td class="ss-item"><b>${esc(r.name)}</b>${size ? `<div class="muted">${esc(size)}</div>` : ""}</td>
-      <td class="ss-num">${q(r.open_qty)}</td><td class="ss-num ss-wide">${money0(r.open_value)}</td><td class="ss-num ss-wide">${q(r.received)}</td><td class="ss-num ss-wide">${q(r.transfers_in)}</td>
-      <td class="ss-num ss-wide">${q(r.transfers_out)}</td><td class="ss-num ss-wide">${q(r.returned)}</td>
+      <td class="ss-num">${q(r.open_qty)}</td><td class="ss-num ss-wide">${money0(r.open_value)}</td><td class="ss-num ss-wide">${q(r.received)}</td>
+      ${dels.map((d) => `<td class="ss-num ss-del">${q(r.by_delivery?.[d.id])}</td>`).join("")}${other ? `<td class="ss-num ss-other">${q(r.received_other)}</td>` : ""}
+      <td class="ss-num ss-wide ss-tight">${q(r.transfers_in)}</td>
+      <td class="ss-num ss-wide ss-tight">${q(r.transfers_out)}</td><td class="ss-num ss-wide">${q(r.returned)}</td>
       <td class="ss-num ss-phone">${q(r.received + r.transfers_in)}</td><td class="ss-num ss-phone">${q(r.transfers_out + r.returned)}</td>
       <td class="ss-num"><b>${q(r.close_qty) || "0"}</b></td>
       <td class="ss-num ss-wide">${r.close_avg == null ? "—" : money(r.close_avg)}</td>
@@ -3051,8 +3103,13 @@ function drawSsTab() {
   const t = ssData.by_sheet[ssTab] || { open_value: 0, close_value: 0 };
   $("ss-card").hidden = false;
   $("ss-title").textContent = `${camp} · ${month} · ${ssTab}`;
-  $("ss-lines").innerHTML = out.join("") || `<tr><td colspan="14"><span class="muted">Nothing on this sheet for this month.</span></td></tr>`;
+  $("ss-lines").innerHTML = out.join("") || `<tr><td colspan="40"><span class="muted">Nothing on this sheet for this month.</span></td></tr>`;
   $("ss-total").innerHTML = `${esc(ssTab)}: P ${money(t.close_value)}<br>All sheets: P ${money(ssData.total.close_value)}`;
+  const list = ssData.deliveries || [], wait = ssData.invoices_waiting || [];
+  $("ss-invoices").innerHTML = `<div class="extra" style="margin-top:8px;display:block"><b>Invoices delivered this month (${list.length})</b>
+      ${list.map((d) => `<div>${esc(d.invoice_number || "no number")} · ${esc(d.supplier || "")} · received ${esc(dayOf(d.received_on))} · load sheet ${esc(d.load_sheet)} · P ${money(d.total_incl)} incl VAT</div>`).join("") || `<div class="muted">None booked to this month.</div>`}
+      ${wait.length ? `<div style="margin-top:6px"><b>Accepted, not on a load sheet yet (${wait.length})</b></div>${wait.map((d) => `<div>${esc(d.invoice_number || "no number")} · ${esc(d.supplier || "")}</div>`).join("")}` : ""}
+      <div class="muted" style="margin-top:4px">Value is what this camp's lines came to on each invoice.</div></div>`;
   $("ss-transit").innerHTML = ssData.in_transit.length
     ? `<div class="extra" style="margin-top:8px;display:block"><b>Stock in transit at the end of this month</b><div class="muted">Sent, not yet booked to this month; not in the figures above.</div>${ssData.in_transit.map((x) => `<div>${esc(x.what)}: P ${money(x.value)}</div>`).join("")}<div><b>With stock in transit: P ${money(ssData.total.close_value + ssData.in_transit_value)}</b></div></div>` : "";
 }
@@ -3066,6 +3123,63 @@ $("ss-tabs").addEventListener("click", (ev) => {
 $("ss-camp").addEventListener("change", drawStockSheet);
 $("ss-month").addEventListener("change", drawStockSheet);
 $("ss-all").addEventListener("change", drawStockSheet);
+$("ss-split").addEventListener("change", () => { if (ssData) drawSsTab(); });
+// Excel: one tab per sheet, every delivery as a column, plus the invoices.
+// The library is only fetched when someone exports (about 1 MB), so the page
+// stays light on a Maun connection.
+function loadXlsx() {
+  if (window.XLSX) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    el.onload = resolve;
+    el.onerror = () => reject(new Error("Couldn't fetch the Excel tool. Check your signal, then try again."));
+    document.head.appendChild(el);
+  });
+}
+$("ss-export").addEventListener("click", async () => {
+  $("ss-error").innerHTML = "";
+  const btn = $("ss-export");
+  btn.disabled = true; btn.textContent = "Preparing…";
+  try {
+    if (!ssData) await drawStockSheet();
+    await loadXlsx();
+    const camp = $("ss-camp").selectedOptions[0].text, month = $("ss-month").selectedOptions[0].text;
+    const wb = XLSX.utils.book_new();
+    const dayOf = (x) => x ? new Date(x + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+    const num = (n) => n == null || n === 0 ? "" : n;
+    for (const name of ["Dry", "Meat and Dairy", "Bar", "Cleaning"]) {
+      const rows = ssData.rows.filter((r) => r.sheet === name);
+      const dels = (ssData.deliveries || []).filter((d) => rows.some((r) => r.by_delivery?.[d.id]));
+      const other = rows.some((r) => r.received_other);
+      const head = ["Category", "Item", "Size", "Open", "Open avg", "Open value", "Rec'd", ...dels.map((d) => `${dayOf(d.received_on)} ${d.invoice_number || "no number"}`), ...(other ? ["Other"] : []), "Trans in", "Trans out", "Ret'd", "Current", "Avg price", "Value"];
+      const aoa = [[`${camp} · ${month} · ${name}`], ["Pula, excluding VAT. Current is what should be there, from the records."], [], head];
+      for (const r of rows) aoa.push([r.category, r.name, r.item_type === "variable_weight" ? "kg" : r.standard_size || "", num(r.open_qty), num(r.open_avg), num(r.open_value), num(r.received),
+        ...dels.map((d) => num(r.by_delivery?.[d.id])), ...(other ? [num(r.received_other)] : []), num(r.transfers_in), num(r.transfers_out), num(r.returned), r.close_qty, num(r.close_avg), num(r.close_value)]);
+      const t = ssData.by_sheet[name] || { open_value: 0, close_value: 0 };
+      const blank = (n) => Array(n).fill("");
+      aoa.push(["Total", ...blank(4), t.open_value, ...blank(head.length - 7), t.close_value]);
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws["!cols"] = head.map((h, i) => ({ wch: i === 1 ? 30 : i === 0 ? 16 : Math.max(9, Math.min(16, String(h).length)) }));
+      XLSX.utils.book_append_sheet(wb, ws, name);
+    }
+    const inv = [[`${camp} · ${month} · Invoices`], [], ["Invoice", "Supplier", "Invoice date", "Received", "Load sheet", "This camp's lines, incl VAT"]];
+    for (const d of ssData.deliveries || []) inv.push([d.invoice_number || "no number", d.supplier || "", dayOf(d.invoice_date), dayOf(d.received_on), d.load_sheet, d.total_incl]);
+    if ((ssData.invoices_waiting || []).length) {
+      inv.push([], ["Accepted, not on a load sheet yet"]);
+      for (const d of ssData.invoices_waiting) inv.push([d.invoice_number || "no number", d.supplier || "", dayOf(d.invoice_date)]);
+    }
+    if (ssData.in_transit.length) {
+      inv.push([], ["Stock in transit at the end of this month", "", "", "", "", "Value excl VAT"]);
+      for (const x of ssData.in_transit) inv.push([x.what, "", "", "", "", x.value]);
+    }
+    const wi = XLSX.utils.aoa_to_sheet(inv);
+    wi["!cols"] = [{ wch: 22 }, { wch: 28 }, { wch: 13 }, { wch: 13 }, { wch: 11 }, { wch: 24 }];
+    XLSX.utils.book_append_sheet(wb, wi, "Invoices");
+    XLSX.writeFile(wb, `${camp} stock sheet ${$("ss-month").value}.xlsx`);
+  } catch (e) { $("ss-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { btn.disabled = false; btn.textContent = "Export to Excel"; }
+});
 $("ss-lines").addEventListener("click", (ev) => {
   const row = ev.target.closest("[data-ss-row]");
   if (!row) return;
@@ -3074,7 +3188,7 @@ $("ss-lines").addEventListener("click", (ev) => {
   const r = ssData.rows.filter((x) => x.sheet === ssTab)[Number(row.dataset.ssRow)];
   const tr = document.createElement("tr");
   tr.className = "ss-detail";
-  tr.innerHTML = `<td colspan="14">${r.moves.map((m) => `<div>${new Date(m.on).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${esc(SS_REASON[m.reason] || m.reason)} · ${m.quantity > 0 ? "+" : ""}${fmtQty(m.quantity)}${m.cost == null ? "" : ` at P ${money(m.cost)}`}</div>`).join("") || "No movements this month."}</td>`;
+  tr.innerHTML = `<td colspan="40">${r.moves.map((m) => `<div>${new Date(m.on).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${esc(SS_REASON[m.reason] || m.reason)} · ${m.quantity > 0 ? "+" : ""}${fmtQty(m.quantity)}${m.cost == null ? "" : ` at P ${money(m.cost)}`}</div>`).join("") || "No movements this month."}</td>`;
   row.after(tr);
 });
 
