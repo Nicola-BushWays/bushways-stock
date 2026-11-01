@@ -151,6 +151,14 @@
     table.grid.ls td:nth-child(3)::before { content: "Qty "; font-size: 12px; font-weight: 600; color: var(--earth); }
     table.grid.ls tr.group td:nth-child(1) { grid-column: auto; }
   }
+  table.ss { border: 1px solid var(--sand); font-size: 13px; min-width: 620px; }
+  table.ss th, table.ss td { border: 1px solid #e3dad2; padding: 6px; }
+  table.ss .ss-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  table.ss .ss-item { position: sticky; left: 0; background: #fff; min-width: 130px; max-width: 170px; z-index: 1; }
+  table.ss thead .ss-item { background: #fff; }
+  table.ss tr.ss-cat td { background: var(--offwhite); font-weight: 900; color: var(--forest); font-size: 12px; }
+  table.ss tr.ss-row { cursor: pointer; }
+  table.ss tr.ss-detail td { background: #fbf8f4; font-size: 12px; }
   .pick-inv { border: 1px solid var(--sand); border-radius: 6px; margin-top: 10px; background: #fff; }
   .pick-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; }
   .pick-head label, .pick-line label { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; margin: 0; color: var(--text); flex: 1 1 200px; font-size: 14px; }
@@ -242,7 +250,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01h</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01i</p>
 </header>
 
 <main>
@@ -275,6 +283,7 @@
         <button type="button" class="secondary small" data-tab="receive" aria-pressed="false">Receiving</button>
         <button type="button" class="secondary small" data-tab="returns" aria-pressed="false">Returns</button>
         <button type="button" class="secondary small" data-tab="transfers" aria-pressed="false">Transfers</button>
+        <button type="button" class="secondary small" data-tab="sheet" aria-pressed="false">Stock sheets</button>
         <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
       </span>
       <span>Signed in as <span class="who" id="who"></span> <span class="muted" id="who-extra"></span>
@@ -468,6 +477,30 @@
       <div class="row"><div><label for="tfa-month">Stock month</label><input type="text" id="tfa-month" placeholder="2026-11" inputmode="numeric" class="rc-qty" style="width:110px"></div>
         <div><button type="button" class="secondary small" id="tfa-show">Show</button></div></div>
       <div class="creator-list" id="tfa-list" style="margin-top:10px"></div>
+    </section>
+   </div>
+
+   <!-- The monthly stock sheet: a camp's month in the layout of Base's Excel -->
+   <div id="view-sheet" hidden>
+    <section class="card">
+      <h2>Monthly stock sheet</h2>
+      <p class="muted">Worked out from everything entered: never typed in. Counts and usage come with the stock take. Pula, excluding VAT.</p>
+      <div class="row">
+        <div><label for="ss-camp">Camp</label><select id="ss-camp"></select></div>
+        <div><label for="ss-month">Month</label><select id="ss-month"></select></div>
+        <div><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="ss-all"> Show all this camp's items</label></div>
+      </div>
+      <div class="filters" id="ss-tabs" style="margin-top:12px"></div>
+      <div id="ss-error"></div>
+    </section>
+    <section class="card" id="ss-card" hidden>
+      <h2 id="ss-title"></h2>
+      <div class="table-wrap"><table class="ss"><thead><tr>
+        <th class="ss-item">Item</th><th class="ss-num">Open</th><th class="ss-num">Open value</th><th class="ss-num">Rec'd</th><th class="ss-num">In</th><th class="ss-num">Out</th><th class="ss-num">Ret'd</th><th class="ss-num">Expected</th><th class="ss-num">Avg price</th><th class="ss-num">Value</th>
+      </tr></thead><tbody id="ss-lines"></tbody></table></div>
+      <p class="muted" style="margin-top:6px">Rec'd: deliveries. In and Out: transfers. Ret'd: sent back to Maun. Tap an item to see what's behind it.</p>
+      <div class="oh-total"><b>Total value of stock</b><b class="oh-total-figure" id="ss-total"></b></div>
+      <div id="ss-transit"></div>
     </section>
    </div>
 
@@ -1044,12 +1077,14 @@ function showView(name) {
   $("view-receive").hidden = name !== "receive";
   $("view-returns").hidden = name !== "returns";
   $("view-transfers").hidden = name !== "transfers";
+  $("view-sheet").hidden = name !== "sheet";
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   if (name === "loads") refreshLoads();
   if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
   if (name === "receive") loadReceiving();
   if (name === "returns") loadReturns();
   if (name === "transfers") loadTransfers();
+  if (name === "sheet") openStockSheet();
 }
 document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.tab)));
 
@@ -2950,6 +2985,84 @@ $("tfa-list").addEventListener("click", async (ev) => {
     } else await api("mark_transfer_invoiced", { body: { transfer_id: u.dataset.tfaUndo, invoiced: false } });
     drawTfAccounts();
   } catch (e) { $("tfa-list").insertAdjacentHTML("afterbegin", `<div class="error">${esc(e.message)}</div>`); }
+});
+
+// --- The monthly stock sheet --------------------------------------------------------
+
+let ssData = null, ssTab = null;
+const SS_REASON = { receipt: "Delivery", correction: "Correction", extra: "Not on a load sheet", return_out: "Returned to Maun", return_in: "Return into Base stock", transfer_in: "Transfer in", transfer_out: "Transfer out", adjustment: "Adjustment" };
+async function openStockSheet() {
+  $("ss-error").innerHTML = "";
+  try {
+    await ensureLocations();
+    if (!$("ss-camp").options.length) {
+      $("ss-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+      const now = new Date(isoToday() + "T12:00:00");
+      const months = [];
+      for (let i = 0; i < 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 15);
+        months.push(`<option value="${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}">${d.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</option>`);
+      }
+      $("ss-month").innerHTML = months.join("");
+    }
+    await drawStockSheet();
+  } catch (e) { $("ss-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+async function drawStockSheet() {
+  if (!$("ss-camp").value) return;
+  $("ss-error").innerHTML = "";
+  try {
+    ssData = await api("stock_sheet", { query: `&location_id=${$("ss-camp").value}&month=${$("ss-month").value}${$("ss-all").checked ? "&all=1" : ""}` });
+  } catch (e) { $("ss-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+  const sheets = ["Dry", "Meat and Dairy", "Bar", "Cleaning"];
+  if (!sheets.includes(ssTab)) ssTab = sheets.find((n) => ssData.rows.some((r) => r.sheet === n)) || "Dry";
+  $("ss-tabs").innerHTML = sheets.map((n) => `<button type="button" class="secondary small" data-ss-tab="${esc(n)}" aria-pressed="${n === ssTab}">${esc(n)}</button>`).join("");
+  drawSsTab();
+}
+function drawSsTab() {
+  const rows = ssData.rows.filter((r) => r.sheet === ssTab);
+  const q = (n) => n ? fmtQty(n) : "";
+  const money0 = (n) => n ? money(n) : "";
+  let cat = null;
+  const out = [];
+  rows.forEach((r, i) => {
+    if (r.category !== cat) { out.push(`<tr class="ss-cat"><td class="ss-item">${esc(r.category)}</td><td colspan="9"></td></tr>`); cat = r.category; }
+    const size = r.item_type === "variable_weight" ? "kg" : r.standard_size || "";
+    out.push(`<tr class="ss-row" data-ss-row="${i}">
+      <td class="ss-item"><b>${esc(r.name)}</b>${size ? `<div class="muted">${esc(size)}</div>` : ""}</td>
+      <td class="ss-num">${q(r.open_qty)}</td><td class="ss-num">${money0(r.open_value)}</td><td class="ss-num">${q(r.received)}</td><td class="ss-num">${q(r.transfers_in)}</td>
+      <td class="ss-num">${q(r.transfers_out)}</td><td class="ss-num">${q(r.returned)}</td><td class="ss-num"><b>${q(r.close_qty) || "0"}</b></td>
+      <td class="ss-num">${r.close_avg == null ? "—" : money(r.close_avg)}</td><td class="ss-num">${money0(r.close_value)}</td></tr>`);
+  });
+  const camp = $("ss-camp").selectedOptions[0].text, month = $("ss-month").selectedOptions[0].text;
+  const t = ssData.by_sheet[ssTab] || { open_value: 0, close_value: 0 };
+  $("ss-card").hidden = false;
+  $("ss-title").textContent = `${camp} · ${month} · ${ssTab}`;
+  $("ss-lines").innerHTML = out.join("") || `<tr><td class="ss-item" colspan="10"><span class="muted">Nothing on this sheet for this month.</span></td></tr>`;
+  $("ss-total").innerHTML = `${esc(ssTab)}: P ${money(t.close_value)}<br>All sheets: P ${money(ssData.total.close_value)}`;
+  $("ss-transit").innerHTML = ssData.in_transit.length
+    ? `<div class="extra" style="margin-top:8px;display:block"><b>Stock in transit at the end of this month</b><div class="muted">Sent, not yet booked to this month; not in the figures above.</div>${ssData.in_transit.map((x) => `<div>${esc(x.what)}: P ${money(x.value)}</div>`).join("")}<div><b>With stock in transit: P ${money(ssData.total.close_value + ssData.in_transit_value)}</b></div></div>` : "";
+}
+$("ss-tabs").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-ss-tab]");
+  if (!b) return;
+  ssTab = b.dataset.ssTab;
+  document.querySelectorAll("[data-ss-tab]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  drawSsTab();
+});
+$("ss-camp").addEventListener("change", drawStockSheet);
+$("ss-month").addEventListener("change", drawStockSheet);
+$("ss-all").addEventListener("change", drawStockSheet);
+$("ss-lines").addEventListener("click", (ev) => {
+  const row = ev.target.closest("[data-ss-row]");
+  if (!row) return;
+  const next = row.nextElementSibling;
+  if (next && next.classList.contains("ss-detail")) return next.remove();
+  const r = ssData.rows.filter((x) => x.sheet === ssTab)[Number(row.dataset.ssRow)];
+  const tr = document.createElement("tr");
+  tr.className = "ss-detail";
+  tr.innerHTML = `<td colspan="10">${r.moves.map((m) => `<div>${new Date(m.on).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${esc(SS_REASON[m.reason] || m.reason)} · ${m.quantity > 0 ? "+" : ""}${fmtQty(m.quantity)}${m.cost == null ? "" : ` at P ${money(m.cost)}`}</div>`).join("") || "No movements this month."}</td>`;
+  row.after(tr);
 });
 
 // --- Stock on hand -------------------------------------------------------------
