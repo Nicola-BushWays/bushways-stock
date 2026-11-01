@@ -196,6 +196,13 @@
   .oh-total-figure { font-size: 18px; color: var(--forest); white-space: nowrap; font-variant-numeric: tabular-nums; }
   table.grid col.c-size { width: 90px; } table.grid col.c-num { width: 100px; } table.grid col.c-dmg { width: 34%; }
   .thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--sand); cursor: zoom-in; vertical-align: middle; }
+  .st-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--sand); }
+  .st-line .st-name { flex: 1; min-width: 0; }
+  #st-lines .st-line input { width: 84px; max-width: 84px; flex: none; text-align: right; font-size: 18px; padding: 8px; }
+  .st-line input.bad { border-color: var(--bad); }
+  .st-doubt { background: #fff3d6; padding: 8px; border-radius: 6px; }
+  .st-group { font-weight: 700; margin-top: 14px; }
+  .st-num { flex: none; width: 58px; text-align: right; }
   .extra { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 10px 12px; border: 1px solid var(--sand); border-radius: 6px; background: #fff; }
   .corr { font-size: 12px; color: var(--bronze); margin-top: 3px; }
   .chip.return { background: var(--bad); color: #fff; }
@@ -270,7 +277,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01k</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01L</p>
 </header>
 
 <main>
@@ -304,6 +311,7 @@
         <button type="button" class="secondary small" data-tab="returns" aria-pressed="false">Returns</button>
         <button type="button" class="secondary small" data-tab="transfers" aria-pressed="false">Transfers</button>
         <button type="button" class="secondary small" data-tab="sheet" aria-pressed="false">Stock sheets</button>
+        <button type="button" class="secondary small" data-tab="take" aria-pressed="false">Stock take</button>
         <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
       </span>
       <span>Signed in as <span class="who" id="who"></span> <span class="muted" id="who-extra"></span>
@@ -504,7 +512,7 @@
    <div id="view-sheet" hidden>
     <section class="card">
       <h2>Monthly stock sheet</h2>
-      <p class="muted">Worked out from everything entered: never typed in. Counts and usage come with the stock take. Pula, excluding VAT.</p>
+      <p class="muted">Worked out from everything entered: never typed in. Once Base approves the month's stock take, it shows the count and usage. Pula, excluding VAT.</p>
       <div class="row">
         <div><label for="ss-camp">Camp</label><select id="ss-camp"></select></div>
         <div><label for="ss-month">Month</label><select id="ss-month"></select></div>
@@ -518,11 +526,55 @@
     <section class="card" id="ss-card" hidden>
       <h2 id="ss-title"></h2>
       <div class="table-wrap"><table class="ss" id="ss-table"><thead><tr id="ss-head"></tr></thead><tbody id="ss-lines"></tbody></table></div>
-      <p class="muted ss-wide-block" style="margin-top:6px">Rec'd: deliveries. Trans in and out: transfers. Ret'd: sent back to Maun. Current: what should be there; the count comes with the stock take. Tap an item to see what's behind it.</p>
-      <p class="muted ss-phone-block" style="margin-top:6px">In: deliveries and transfers in. Out: transfers out and returns. Current: what should be there. Value shows the average price under it. Tap an item to see what's behind it; a computer shows every column.</p>
+      <p class="muted ss-wide-block" style="margin-top:6px">Rec'd: deliveries. Trans in and out: transfers. Ret'd: sent back to Maun. Current: what should be there, until the month's count is approved. Usage: what the count says went. Tap an item to see what's behind it.</p>
+      <p class="muted ss-phone-block" style="margin-top:6px">In: deliveries and transfers in. Out: transfers out and returns. Current: what should be there, until the month's count is approved. Value shows the average price under it. Tap an item to see what's behind it; a computer shows every column.</p>
       <div class="oh-total"><b>Total value of stock</b><b class="oh-total-figure" id="ss-total"></b></div>
+      <div id="ss-take"></div>
       <div id="ss-transit"></div>
       <div id="ss-invoices"></div>
+    </section>
+   </div>
+
+   <!-- Stock take: a camp's count, on a phone or from a photographed sheet -->
+   <div id="view-take" hidden>
+    <section class="card" id="st-start">
+      <h2>Stock take</h2>
+      <p class="muted">Count on your phone, or print the sheet, write on it and photograph it. You can do some of each. Base approves a month-end count, and only then does stock change. A mid-month count is a snapshot: it never changes stock.</p>
+      <div class="row">
+        <div><label for="st-camp">Camp</label><select id="st-camp"></select></div>
+        <div><label for="st-kind">Kind of count</label><select id="st-kind"><option value="month_end">Month-end</option><option value="mid_month">Mid-month snapshot</option></select></div>
+        <div id="st-month-box"><label for="st-month">Counts as the end of</label><select id="st-month"></select></div>
+        <div><button type="button" class="primary" id="st-begin">Start the count</button></div>
+      </div>
+      <div id="st-error"></div>
+      <h3 style="margin-top:14px">Recent stock takes</h3>
+      <div class="recent-list" id="st-list"></div>
+    </section>
+    <section class="card" id="st-card" hidden>
+      <button type="button" class="secondary small" id="st-back">← All stock takes</button>
+      <h2 id="st-title" style="margin-top:10px"></h2>
+      <div id="st-state" class="muted"></div>
+      <div id="st-top-error"></div>
+      <div id="st-tools" style="margin-top:10px">
+        <div class="filters">
+          <button type="button" class="secondary" id="st-print">Download the sheet to print (Excel)</button>
+          <button type="button" class="secondary" data-st-photo="1">Photograph a filled-in page</button>
+          <button type="button" class="secondary" data-st-photo="0">Photo from gallery</button>
+        </div>
+        <div id="st-read-status" class="muted" style="margin-top:6px"></div>
+      </div>
+      <div id="st-photos" style="margin-top:8px"></div>
+      <div id="st-unlisted"></div>
+      <div id="st-compare"></div>
+      <div class="filters" id="st-filter" style="margin-top:12px"></div>
+      <div id="st-lines" style="margin-top:8px"></div>
+      <div id="st-add-box" style="margin-top:12px">
+        <label for="st-add-search">Found something that isn't listed? Search for it</label>
+        <input id="st-add-search" autocomplete="off" placeholder="Type part of the name">
+        <div class="recent-list" id="st-add-list" style="margin-top:6px"></div>
+      </div>
+      <div id="st-actions" style="margin-top:14px"></div>
+      <div id="st-error2"></div>
     </section>
    </div>
 
@@ -1109,6 +1161,7 @@ function showView(name) {
   $("view-returns").hidden = name !== "returns";
   $("view-transfers").hidden = name !== "transfers";
   $("view-sheet").hidden = name !== "sheet";
+  $("view-take").hidden = name !== "take";
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   if (name === "loads") refreshLoads();
   if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
@@ -1116,6 +1169,7 @@ function showView(name) {
   if (name === "returns") loadReturns();
   if (name === "transfers") loadTransfers();
   if (name === "sheet") openStockSheet();
+  if (name === "take") openStockTakes();
 }
 document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.tab)));
 
@@ -3040,7 +3094,7 @@ $("tfa-list").addEventListener("click", async (ev) => {
 // --- The monthly stock sheet --------------------------------------------------------
 
 let ssData = null, ssTab = null;
-const SS_REASON = { receipt: "Delivery", correction: "Correction", extra: "Not on a load sheet", return_out: "Returned to Maun", return_in: "Return into Base stock", transfer_in: "Transfer in", transfer_out: "Transfer out", adjustment: "Adjustment" };
+const SS_REASON = { receipt: "Delivery", correction: "Correction", extra: "Not on a load sheet", return_out: "Returned to Maun", return_in: "Return into Base stock", transfer_in: "Transfer in", transfer_out: "Transfer out", adjustment: "Adjustment", stock_take: "Stock take" };
 async function openStockSheet() {
   $("ss-error").innerHTML = "";
   try {
@@ -3072,6 +3126,7 @@ async function drawStockSheet() {
 function drawSsTab() {
   const rows = ssData.rows.filter((r) => r.sheet === ssTab);
   const split = $("ss-split").checked;
+  const counted = ssData.take?.status === "approved";
   // Default: one Rec'd total. "Show each delivery" adds a column per invoice.
   const dels = split ? (ssData.deliveries || []).filter((d) => rows.some((r) => r.by_delivery?.[d.id])) : [];
   const other = split && rows.some((r) => r.received_other);
@@ -3080,7 +3135,7 @@ function drawSsTab() {
   $("ss-head").innerHTML = `<th class="ss-item">Item</th><th class="ss-num">Open</th><th class="ss-num ss-wide">Open value</th><th class="ss-num ss-wide">Rec'd</th>`
     + dels.map((d) => `<th class="ss-del">${esc(dayOf(d.received_on))}<br>${esc(d.invoice_number || "no number")}</th>`).join("")
     + (other ? `<th class="ss-num ss-other">Other</th>` : "")
-    + `<th class="ss-num ss-wide ss-tight">Trans in</th><th class="ss-num ss-wide ss-tight">Trans out</th><th class="ss-num ss-wide">Ret'd</th><th class="ss-num ss-phone">In</th><th class="ss-num ss-phone">Out</th><th class="ss-num">Current</th><th class="ss-num ss-wide">Avg price</th><th class="ss-num">Value</th>`;
+    + `<th class="ss-num ss-wide ss-tight">Trans in</th><th class="ss-num ss-wide ss-tight">Trans out</th><th class="ss-num ss-wide">Ret'd</th><th class="ss-num ss-phone">In</th><th class="ss-num ss-phone">Out</th><th class="ss-num">${counted ? "Counted" : "Current"}</th>${counted ? `<th class="ss-num ss-wide">Usage</th><th class="ss-num ss-wide">Usage value</th>` : ""}<th class="ss-num ss-wide">Avg price</th><th class="ss-num">Value</th>`;
   const q = (n) => n ? fmtQty(n) : "";
   const money0 = (n) => n ? money(n) : "";
   let cat = null;
@@ -3095,16 +3150,21 @@ function drawSsTab() {
       <td class="ss-num ss-wide ss-tight">${q(r.transfers_in)}</td>
       <td class="ss-num ss-wide ss-tight">${q(r.transfers_out)}</td><td class="ss-num ss-wide">${q(r.returned)}</td>
       <td class="ss-num ss-phone">${q(r.received + r.transfers_in)}</td><td class="ss-num ss-phone">${q(r.transfers_out + r.returned)}</td>
-      <td class="ss-num"><b>${q(r.close_qty) || "0"}</b></td>
+      <td class="ss-num"><b>${q(r.close_qty) || "0"}</b>${counted && r.counted === false ? `<div class="muted">not counted</div>` : ""}${counted && r.usage ? `<div class="muted ss-phone-block">used ${fmtQty(r.usage)}</div>` : ""}</td>
+      ${counted ? `<td class="ss-num ss-wide">${q(r.usage)}</td><td class="ss-num ss-wide">${money0(r.usage_value)}</td>` : ""}
       <td class="ss-num ss-wide">${r.close_avg == null ? "—" : money(r.close_avg)}</td>
       <td class="ss-num">${money0(r.close_value)}<div class="muted ss-phone-block">${r.close_avg == null ? "" : "@ " + money(r.close_avg)}</div></td></tr>`);
   });
   const camp = $("ss-camp").selectedOptions[0].text, month = $("ss-month").selectedOptions[0].text;
-  const t = ssData.by_sheet[ssTab] || { open_value: 0, close_value: 0 };
+  const t = ssData.by_sheet[ssTab] || { open_value: 0, close_value: 0, usage_value: 0 };
   $("ss-card").hidden = false;
   $("ss-title").textContent = `${camp} · ${month} · ${ssTab}`;
   $("ss-lines").innerHTML = out.join("") || `<tr><td colspan="40"><span class="muted">Nothing on this sheet for this month.</span></td></tr>`;
-  $("ss-total").innerHTML = `${esc(ssTab)}: P ${money(t.close_value)}<br>All sheets: P ${money(ssData.total.close_value)}`;
+  $("ss-total").innerHTML = `${esc(ssTab)}: P ${money(t.close_value)}<br>All sheets: P ${money(ssData.total.close_value)}${counted ? `<br>Usage, ${esc(ssTab)}: P ${money(t.usage_value)}<br>Usage, all sheets: P ${money(ssData.total.usage_value)}` : ""}`;
+  $("ss-take").innerHTML = !ssData.take ? "" : `<div class="extra" style="margin-top:8px;display:block">${counted
+    ? `<b>Counted: stock take ${esc(ssData.take.number)}</b>, on ${esc(dayOf(ssData.take.counted_on))}.`
+    : ssData.take.status === "submitted" ? `<b>Stock take ${esc(ssData.take.number)} is waiting for Base to approve it.</b> These figures don't include it yet.`
+    : `<b>Stock take ${esc(ssData.take.number)} is still being counted.</b> These figures don't include it yet.`}</div>`;
   const list = ssData.deliveries || [], wait = ssData.invoices_waiting || [];
   $("ss-invoices").innerHTML = `<div class="extra" style="margin-top:8px;display:block"><b>Invoices delivered this month (${list.length})</b>
       ${list.map((d) => `<div>${esc(d.invoice_number || "no number")} · ${esc(d.supplier || "")} · received ${esc(dayOf(d.received_on))} · load sheet ${esc(d.load_sheet)} · P ${money(d.total_incl)} incl VAT</div>`).join("") || `<div class="muted">None booked to this month.</div>`}
@@ -3148,17 +3208,18 @@ $("ss-export").addEventListener("click", async () => {
     const wb = XLSX.utils.book_new();
     const dayOf = (x) => x ? new Date(x + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
     const num = (n) => n == null || n === 0 ? "" : n;
+    const counted = ssData.take?.status === "approved";
     for (const name of ["Dry", "Meat and Dairy", "Bar", "Cleaning"]) {
       const rows = ssData.rows.filter((r) => r.sheet === name);
       const dels = (ssData.deliveries || []).filter((d) => rows.some((r) => r.by_delivery?.[d.id]));
       const other = rows.some((r) => r.received_other);
-      const head = ["Category", "Item", "Size", "Open", "Open avg", "Open value", "Rec'd", ...dels.map((d) => `${dayOf(d.received_on)} ${d.invoice_number || "no number"}`), ...(other ? ["Other"] : []), "Trans in", "Trans out", "Ret'd", "Current", "Avg price", "Value"];
-      const aoa = [[`${camp} · ${month} · ${name}`], ["Pula, excluding VAT. Current is what should be there, from the records."], [], head];
+      const head = ["Category", "Item", "Size", "Open", "Open avg", "Open value", "Rec'd", ...dels.map((d) => `${dayOf(d.received_on)} ${d.invoice_number || "no number"}`), ...(other ? ["Other"] : []), "Trans in", "Trans out", "Ret'd", counted ? "Counted" : "Current", ...(counted ? ["Usage", "Usage value"] : []), "Avg price", "Value"];
+      const aoa = [[`${camp} · ${month} · ${name}`], [counted ? `Pula, excluding VAT. Closing stock is stock take ${ssData.take.number}, counted ${dayOf(ssData.take.counted_on)}.` : "Pula, excluding VAT. Current is what should be there, from the records."], [], head];
       for (const r of rows) aoa.push([r.category, r.name, r.item_type === "variable_weight" ? "kg" : r.standard_size || "", num(r.open_qty), num(r.open_avg), num(r.open_value), num(r.received),
-        ...dels.map((d) => num(r.by_delivery?.[d.id])), ...(other ? [num(r.received_other)] : []), num(r.transfers_in), num(r.transfers_out), num(r.returned), r.close_qty, num(r.close_avg), num(r.close_value)]);
+        ...dels.map((d) => num(r.by_delivery?.[d.id])), ...(other ? [num(r.received_other)] : []), num(r.transfers_in), num(r.transfers_out), num(r.returned), r.close_qty, ...(counted ? [num(r.usage), num(r.usage_value)] : []), num(r.close_avg), num(r.close_value)]);
       const t = ssData.by_sheet[name] || { open_value: 0, close_value: 0 };
       const blank = (n) => Array(n).fill("");
-      aoa.push(["Total", ...blank(4), t.open_value, ...blank(head.length - 7), t.close_value]);
+      aoa.push(["Total", ...blank(4), t.open_value, ...blank(head.length - (counted ? 9 : 7)), ...(counted ? [t.usage_value, ""] : []), t.close_value]);
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       ws["!cols"] = head.map((h, i) => ({ wch: i === 1 ? 30 : i === 0 ? 16 : Math.max(9, Math.min(16, String(h).length)) }));
       XLSX.utils.book_append_sheet(wb, ws, name);
@@ -3190,6 +3251,378 @@ $("ss-lines").addEventListener("click", (ev) => {
   tr.className = "ss-detail";
   tr.innerHTML = `<td colspan="40">${r.moves.map((m) => `<div>${new Date(m.on).toLocaleDateString("en-GB", { day: "numeric", month: "short" })} · ${esc(SS_REASON[m.reason] || m.reason)} · ${m.quantity > 0 ? "+" : ""}${fmtQty(m.quantity)}${m.cost == null ? "" : ` at P ${money(m.cost)}`}</div>`).join("") || "No movements this month."}</td>`;
   row.after(tr);
+});
+
+// --- Stock take ------------------------------------------------------------------
+
+let stData = null, stList = null, stFilter = "all";
+const stPending = new Map(); // line id -> what's still to reach the server
+let stTimer = null, stSaving = false;
+const stDraftKey = (id) => `camp_stock_take_${id}`;
+const stSaveDraft = () => {
+  try { if (stData) localStorage.setItem(stDraftKey(stData.take.id), JSON.stringify([...stPending])); } catch {}
+};
+const stLoadDraft = (id) => {
+  try { return new Map(JSON.parse(localStorage.getItem(stDraftKey(id)) || "[]")); } catch { return new Map(); }
+};
+const stMonthName = (d) => new Date(String(d).slice(0, 10) + "T12:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+const stDay = (d) => d ? new Date(String(d).slice(0, 10) + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+const stName = (t) => `${t.kind === "month_end" ? "Month-end" : "Mid-month"} · ${stMonthName(t.stock_period)}`;
+const ST_STATE = { counting: "being counted", submitted: "waiting for Base", approved: "approved" };
+
+async function openStockTakes() {
+  $("st-error").innerHTML = "";
+  try {
+    await ensureLocations();
+    stList = await api("stock_takes");
+    if (!$("st-camp").options.length) {
+      const home = locations.find((l) => l.id === stList.home_location_id);
+      $("st-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.name === (home?.name || DEFAULT_CAMP) ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+      // Early in a month the count is for the month just ended (brain dump:
+      // it may be done two or three days late and still count as month end).
+      const now = new Date(isoToday() + "T12:00:00");
+      const opts = [-1, 0, -2].map((n) => new Date(now.getFullYear(), now.getMonth() + n, 15));
+      if (now.getDate() > 20) opts.unshift(opts.splice(1, 1)[0]);
+      $("st-month").innerHTML = opts.map((d) => `<option value="${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}">${d.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</option>`).join("");
+    }
+    $("st-list").innerHTML = stList.stock_takes.map((t) => `<button type="button" class="secondary" data-st-open="${t.id}">
+        <b>${esc(t.locations?.name || "")}</b> · ${esc(stName(t))} <span class="muted">· stock take ${esc(t.number)} · ${esc(ST_STATE[t.status] || t.status)} · ${t.counted_count} of ${t.line_count} counted</span></button>`).join("")
+      || `<span class="muted">No stock takes yet.</span>`;
+  } catch (e) { $("st-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+$("st-kind").addEventListener("change", () => { $("st-month-box").hidden = $("st-kind").value !== "month_end"; });
+$("st-begin").addEventListener("click", async () => {
+  $("st-error").innerHTML = "";
+  $("st-begin").disabled = true;
+  try {
+    drawTake(await api("start_stock_take", { body: { location_id: $("st-camp").value, kind: $("st-kind").value, month: $("st-month").value } }));
+  } catch (e) { $("st-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  $("st-begin").disabled = false;
+});
+$("st-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-st-open]");
+  if (!b) return;
+  try { drawTake(await api("stock_take", { query: `&id=${b.dataset.stOpen}` })); }
+  catch (e) { $("st-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("st-back").addEventListener("click", async () => {
+  await stFlush();
+  stData = null;
+  $("st-card").hidden = true; $("st-start").hidden = false;
+  openStockTakes();
+});
+
+function drawTake(data) {
+  stData = data;
+  const t = data.take;
+  stPending.clear();
+  stFilter = "all";
+  // Counts kept on this phone when the signal dropped go up with the next save.
+  if (t.status === "counting") for (const [k, v] of stLoadDraft(t.id)) stPending.set(k, v);
+  if (stPending.size) stTimer = setTimeout(stFlush, 500);
+  $("st-start").hidden = true; $("st-card").hidden = false;
+  $("st-title").textContent = `${t.locations?.name || ""} · ${stName(t)}`;
+  const who = (x) => x?.name ? ` by ${x.name}` : "";
+  $("st-state").textContent = `Stock take ${t.number}. ` + (
+    t.status === "counting" ? `Started${who(t.starter)}. Each count saves as you go; nothing changes stock until it's handed in${t.kind === "month_end" ? " and Base approves it" : ""}.`
+    : t.status === "submitted" && t.kind === "month_end" ? `Counted ${stDay(t.counted_on)}, handed in${who(t.submitter)}. Waiting for Base to approve it.`
+    : t.status === "submitted" ? `Counted ${stDay(t.counted_on)}${who(t.submitter)}. A snapshot: it didn't change stock.`
+    : `Counted ${stDay(t.counted_on)}, handed in${who(t.submitter)}, approved${who(t.approver)}. Stock now follows this count, booked to ${stMonthName(t.stock_period)}.`);
+  $("st-top-error").innerHTML = "";
+  const counting = t.status === "counting" && data.can_count;
+  $("st-tools").hidden = !counting;
+  $("st-add-box").hidden = !counting;
+  drawStPhotos();
+  drawStCompare();
+  drawStLines();
+  drawStActions();
+  window.scrollTo(0, 0);
+}
+function stValue(l) { return stPending.has(l.id) && "counted_qty" in stPending.get(l.id) ? stPending.get(l.id).counted_qty : l.counted_qty; }
+function stDoubt(l) { return stPending.has(l.id) ? null : l.read_doubt; }
+function drawStPhotos() {
+  const { photos, unlisted, take } = stData;
+  $("st-photos").innerHTML = photos.map((p, i) => `<button type="button" class="secondary small" data-photo-url="${esc(p.photo_url)}">See photo ${i + 1}</button>`).join(" ");
+  $("st-unlisted").innerHTML = unlisted.length && take.status === "counting"
+    ? `<div class="extra" style="margin-top:8px;display:block"><b>Written on the sheet, not on a printed line</b><div class="muted">These weren't filled in. Search for each one below and add it.</div>${unlisted.map((u) => `<div>${esc(u.written_item)}: ${esc(u.count_text)}</div>`).join("")}</div>` : "";
+}
+function drawStCompare() {
+  const c = stData.comparison;
+  if (!c) { $("st-compare").innerHTML = ""; return; }
+  const later = stData.booked_later || [];
+  $("st-compare").innerHTML = `<div class="oh-total" style="margin-top:10px"><b>${stData.take.kind === "month_end" ? "Usage this month" : "Used since the last month-end count"}</b><b class="oh-total-figure">P ${money(c.usage_value)}</b></div>
+    <div class="oh-total"><b>Value of stock on this count</b><b class="oh-total-figure">P ${money(c.closing_value)}</b></div>
+    ${c.not_counted ? `<div class="extra st-doubt" style="margin-top:8px;display:block"><b>${c.not_counted} not counted.</b> Their stock stays at what the records say, and they show no usage.</div>` : ""}
+    ${later.length ? `<div class="extra st-doubt" style="margin-top:8px;display:block"><b>Arrived before this count, booked to the next month</b><div>These were on the shelf when it was counted, but aren't in this month's records, so usage will look too low by this much. If they were counted, send the count back and take them off it.</div>${later.map((m) => `<div>${esc(m.name)}: ${fmtQty(m.quantity)} on ${esc(stDay(m.on))}</div>`).join("")}</div>` : ""}`;
+}
+function drawStLines() {
+  const { take, lines, comparison, office } = stData;
+  const counting = take.status === "counting" && stData.can_count;
+  const isOut = (l) => stValue(l) == null || stValue(l) === "";
+  const toCheck = lines.filter(stDoubt);
+  const missing = lines.filter(isOut);
+  $("st-filter").innerHTML = [["all", `All (${lines.length})`], ["open", `Not counted (${missing.length})`], ["check", `To check (${toCheck.length})`]]
+    .map(([k, label]) => `<button type="button" class="secondary small" data-st-filter="${k}" aria-pressed="${stFilter === k}">${label}</button>`).join("");
+  const shown = lines.filter((l) => stFilter === "open" ? isOut(l) : stFilter === "check" ? stDoubt(l) : true);
+  let group = null;
+  const out = [];
+  if (comparison) out.push(`<div class="st-line muted"><div class="st-name"></div><div class="st-num">Counted</div><div class="st-num">Records</div><div class="st-num">Used</div></div>`);
+  for (const l of shown) {
+    const it = l.stock_items;
+    const g = `${it.sheet} · ${it.category}`;
+    if (g !== group) { out.push(`<div class="st-group">${esc(g)}</div>`); group = g; }
+    const size = it.item_type === "variable_weight" ? "kg" : it.standard_size || "";
+    const name = `<div class="st-name"><b>${esc(it.name)}</b>${size ? `<div class="muted">${esc(size)}</div>` : ""}`;
+    if (counting) {
+      const v = stValue(l);
+      const doubt = stDoubt(l);
+      out.push(`<div class="st-line ${doubt ? "st-doubt" : ""}">${name}
+        ${l.counted_source === "photo" && !stPending.has(l.id) ? `<div class="muted">from the photo</div>` : ""}
+        ${doubt ? `<div>${esc(doubt)}</div><button type="button" class="secondary small" data-st-ok="${l.id}">${v == null ? "Leave it not counted" : "It's right"}</button>${l.photo_url ? ` <button type="button" class="secondary small" data-photo-url="${esc(l.photo_url)}">See the photo</button>` : ""}` : ""}
+        </div><input type="text" inputmode="decimal" aria-label="Count for ${esc(it.name)}" data-st-count="${l.id}" value="${v == null ? "" : esc(v)}"></div>`);
+    } else if (comparison) {
+      const fixes = l.stock_take_corrections || [];
+      const canFix = office && take.status === "approved";
+      out.push(`<div class="st-line">${name}
+        ${fixes.map((c) => `<div class="muted">Corrected from ${c.old_quantity == null ? "not counted" : fmtQty(Number(c.old_quantity))}: ${esc(c.reason)}</div>`).join("")}
+        ${canFix ? `<button type="button" class="secondary small" data-st-fix="${l.id}">Correct</button>` : ""}</div>
+        <div class="st-num"><b>${l.counted_qty == null ? "—" : fmtQty(Number(l.counted_qty))}</b></div>
+        <div class="st-num">${l.expected == null ? "—" : fmtQty(l.expected)}</div>
+        <div class="st-num">${l.used == null ? "" : fmtQty(l.used)}${l.used_value ? `<div class="muted">P ${money(l.used_value)}</div>` : ""}</div></div>`);
+    } else {
+      out.push(`<div class="st-line">${name}</div><div class="st-num"><b>${l.counted_qty == null ? "—" : fmtQty(Number(l.counted_qty))}</b></div></div>`);
+    }
+  }
+  $("st-lines").innerHTML = out.join("") || `<span class="muted">Nothing here.</span>`;
+}
+function drawStActions() {
+  const { take, lines, office, can_count } = stData;
+  const counted = lines.filter((l) => stValue(l) != null && stValue(l) !== "").length;
+  if (take.status === "counting" && can_count) {
+    $("st-actions").innerHTML = `<div class="row">
+        <div><label for="st-counted-on">Day it was counted</label><input type="date" id="st-counted-on" value="${esc(isoToday())}" max="${esc(isoToday())}"></div>
+      </div>
+      <p class="muted" id="st-tally">${counted} of ${lines.length} counted. An empty box means not counted; if there are none, type 0.</p>
+      <button type="button" class="primary" id="st-submit">Hand in the count</button>
+      <button type="button" class="secondary" id="st-discard">Discard this count</button>`;
+  } else if (take.status === "submitted" && take.kind === "month_end" && office) {
+    $("st-actions").innerHTML = `<p class="muted">Approving moves stock to these counts, and the differences become usage on ${esc(stMonthName(take.stock_period))}'s stock sheet.</p>
+      <button type="button" class="primary" id="st-approve">Approve this count</button>
+      <button type="button" class="secondary" id="st-reopen">Send it back to be recounted</button>`;
+  } else $("st-actions").innerHTML = "";
+  $("st-error2").innerHTML = "";
+}
+const stNumber = (raw) => {
+  const t = String(raw).trim().replace(",", ".");
+  if (t === "") return "";
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+};
+async function stFlush() {
+  clearTimeout(stTimer);
+  if (!stData || stSaving || !stPending.size) return !stPending.size;
+  stSaving = true;
+  const batch = [...stPending].map(([line_id, v]) => ({ line_id, ...v }));
+  try {
+    await api("save_stock_take_counts", { body: { stock_take_id: stData.take.id, counts: batch } });
+    for (const c of batch) {
+      const l = stData.lines.find((x) => x.id === c.line_id);
+      if (l) {
+        l.read_doubt = null;
+        if (!c.keep_count) { l.counted_qty = c.counted_qty === "" ? null : c.counted_qty; l.counted_source = c.counted_qty === "" ? null : "phone"; }
+      }
+      const now = stPending.get(c.line_id);
+      if (now && now.counted_qty === c.counted_qty && now.keep_count === c.keep_count) stPending.delete(c.line_id);
+    }
+    stSaveDraft();
+    $("st-error2").innerHTML = "";
+    return !stPending.size;
+  } catch (e) {
+    $("st-error2").innerHTML = `<div class="error">Couldn't save yet, so your counts are being kept on this phone: ${esc(e.message)}</div>`;
+    return false;
+  } finally { stSaving = false; }
+}
+$("st-lines").addEventListener("input", (ev) => {
+  const box = ev.target.closest("[data-st-count]");
+  if (!box) return;
+  const n = stNumber(box.value);
+  box.classList.toggle("bad", n === null);
+  if (n === null) return;
+  stPending.set(box.dataset.stCount, { counted_qty: n });
+  stSaveDraft();
+  clearTimeout(stTimer);
+  stTimer = setTimeout(stFlush, 2000);
+  const counted = stData.lines.filter((l) => stValue(l) != null && stValue(l) !== "").length;
+  if ($("st-tally")) $("st-tally").textContent = `${counted} of ${stData.lines.length} counted. An empty box means not counted; if there are none, type 0.`;
+});
+$("st-filter").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-st-filter]");
+  if (!b) return;
+  stFilter = b.dataset.stFilter;
+  drawStLines();
+});
+$("st-card").addEventListener("click", async (ev) => {
+  const u = ev.target.closest("[data-photo-url]");
+  if (u) return openViewer(u.dataset.photoUrl);
+  const ok = ev.target.closest("[data-st-ok]");
+  if (ok) {
+    stPending.set(ok.dataset.stOk, { keep_count: true });
+    stSaveDraft();
+    await stFlush();
+    return drawStLines();
+  }
+  const fix = ev.target.closest("[data-st-fix]");
+  if (fix) {
+    const raw = prompt("The right count:");
+    if (raw === null) return;
+    const qty = stNumber(raw);
+    if (qty === null || qty === "") { $("st-top-error").innerHTML = `<div class="error">A count must be a number, 0 or more.</div>`; return; }
+    const reason = prompt("Why is it changing?");
+    if (!reason) return;
+    try { drawTake(await api("correct_stock_take_line", { body: { stock_take_id: stData.take.id, line_id: fix.dataset.stFix, new_quantity: qty, reason } })); }
+    catch (e) { $("st-top-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+    return;
+  }
+  const photo = ev.target.closest("[data-st-photo]");
+  if (photo) return pickPhoto(photo.dataset.stPhoto === "1", true, stReadPhotos);
+  const act = ev.target.closest("#st-submit, #st-discard, #st-approve, #st-reopen");
+  if (!act) return;
+  $("st-error2").innerHTML = "";
+  act.disabled = true;
+  try {
+    if (act.id === "st-submit") {
+      if (!(await stFlush())) throw new Error("Some counts haven't saved yet. Try again when there's signal.");
+      const left = stData.lines.filter((l) => l.counted_qty == null).length;
+      if (left && !confirm(`${left} of ${stData.lines.length} items aren't counted. They'll keep what the records say. Hand in anyway?`)) return;
+      drawTake(await api("submit_stock_take", { body: { stock_take_id: stData.take.id, counted_on: $("st-counted-on").value } }));
+    } else if (act.id === "st-discard") {
+      if (!confirm("Discard this count and everything entered on it?")) return;
+      await api("discard_stock_take", { body: { stock_take_id: stData.take.id } });
+      stPending.clear(); stSaveDraft();
+      stData = null;
+      $("st-card").hidden = true; $("st-start").hidden = false;
+      openStockTakes();
+    } else if (act.id === "st-approve") {
+      if (!confirm("Approve this count? Stock moves to these figures.")) return;
+      drawTake(await api("approve_stock_take", { body: { stock_take_id: stData.take.id } }));
+    } else if (act.id === "st-reopen") {
+      drawTake(await api("reopen_stock_take", { body: { stock_take_id: stData.take.id } }));
+    }
+  } catch (e) { $("st-error2").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { if (document.contains(act)) act.disabled = false; }
+});
+// One page at a time, each with its own read, so a poor signal loses one page
+// and not the lot. A read only fills in the draft.
+async function stReadPhotos(files) {
+  $("st-top-error").innerHTML = "";
+  if (!(await stFlush())) { $("st-top-error").innerHTML = `<div class="error">Your typed counts haven't saved yet. Try again when there's signal.</div>`; return; }
+  let filled = 0, doubts = 0, blank = 0, sure = true;
+  const notes = [];
+  const say = (x) => { $("st-read-status").textContent = x; };
+  for (let i = 0; i < files.length; i++) {
+    say(`Reading page ${i + 1} of ${files.length}. This takes about half a minute a page…`);
+    try {
+      const r = await api("read_stock_take_photo", { body: { stock_take_id: stData.take.id, photo_data_url: await shrink(files[i]) } });
+      filled += r.filled; doubts += r.doubts; blank += r.blank; notes.push(...r.notes);
+      if (r.wrong_number_unknown) sure = false;
+      stData = { ...stData, lines: r.lines, photos: r.photos, unlisted: r.unlisted };
+      drawStPhotos(); drawStLines(); drawStActions();
+    } catch (e) {
+      $("st-top-error").innerHTML += `<div class="error">Page ${i + 1}: ${esc(e.message)} Take that page again.</div>`;
+    }
+  }
+  say(`Filled in ${filled}, ${doubts} to check, ${blank} left blank on the sheet. Compare them with your sheet before handing in.${sure ? "" : " The stock take number wasn't in one of the photos, so check that page is from this count."}${notes.length ? " " + notes.join(" ") : ""}`);
+  if (doubts) { stFilter = "check"; drawStLines(); }
+}
+$("st-add-search").addEventListener("input", async () => {
+  await ensureCatalogue();
+  pickList("st-add-search", "st-add-list", null);
+});
+$("st-add-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-pick-item]");
+  if (!b) return;
+  $("st-error2").innerHTML = "";
+  try {
+    await stFlush();
+    drawTake(await api("add_stock_take_line", { body: { stock_take_id: stData.take.id, stock_item_id: b.dataset.pickItem } }));
+    $("st-add-search").value = ""; $("st-add-list").innerHTML = "";
+  } catch (e) { $("st-error2").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+// The printed sheet: one tab, so printing it prints it all, with the number of
+// the stock take and each line's number for the reader to find its way back.
+// ExcelJS rather than the export's library, which can't draw borders; it's
+// only fetched when someone downloads a sheet.
+function loadExcelJs() {
+  if (window.ExcelJS) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js";
+    el.onload = resolve;
+    el.onerror = () => reject(new Error("Couldn't fetch the Excel tool. Check your signal, then try again."));
+    document.head.appendChild(el);
+  });
+}
+$("st-print").addEventListener("click", async () => {
+  const btn = $("st-print");
+  btn.disabled = true; btn.textContent = "Preparing…";
+  $("st-top-error").innerHTML = "";
+  try {
+    await loadExcelJs();
+    const { take, lines } = stData;
+    const camp = take.locations?.name || "";
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Stock take", {
+      pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: "1:3",
+        margins: { left: 0.4, right: 0.4, top: 0.4, bottom: 0.5, header: 0.2, footer: 0.2 } },
+      headerFooter: { oddFooter: `&CStock take ${take.number} · page &P of &N` },
+    });
+    ws.columns = [{ width: 7 }, { width: 58 }, { width: 13 }, { width: 15 }];
+    const thin = { style: "thin" }, all = { top: thin, left: thin, bottom: thin, right: thin };
+    ws.mergeCells("A1:D1");
+    ws.getCell("A1").value = `Stock take ${take.number} · ${camp} · ${stName(take)}`;
+    ws.getCell("A1").font = { bold: true, size: 14 };
+    ws.mergeCells("A2:D2");
+    ws.getCell("A2").value = "Count single units: bottles, tins, packets, not cases. Write one clear figure in the box; if there are none, write 0. Counted by: ____________  Date: ________";
+    ws.getCell("A2").alignment = { wrapText: true, vertical: "top" };
+    ws.getRow(2).height = 32;
+    const head = ws.getRow(3);
+    head.values = ["No.", "Item", "Size", "Count"];
+    head.font = { bold: true };
+    head.eachCell((c) => { c.border = all; c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E2D5" } }; });
+    let group = null;
+    for (const l of lines) {
+      const it = l.stock_items;
+      const g = `${it.sheet} · ${it.category}`;
+      if (g !== group) {
+        const r = ws.addRow([g]);
+        ws.mergeCells(`A${r.number}:D${r.number}`);
+        r.font = { bold: true };
+        r.height = 20;
+        group = g;
+      }
+      const r = ws.addRow([l.line_no, it.name, it.item_type === "variable_weight" ? "kg" : it.standard_size || "", ""]);
+      r.height = 26;
+      r.alignment = { vertical: "middle" };
+      r.eachCell({ includeEmpty: true }, (c) => { c.border = all; });
+      r.getCell(4).border = { top: thin, bottom: thin, left: { style: "medium" }, right: { style: "medium" } };
+    }
+    const note = ws.addRow(["Anything found that isn't listed: write its name and count here"]);
+    ws.mergeCells(`A${note.number}:D${note.number}`);
+    note.font = { bold: true };
+    note.height = 22;
+    for (let i = 0; i < 6; i++) {
+      const r = ws.addRow(["", "", "", ""]);
+      r.height = 26;
+      r.eachCell({ includeEmpty: true }, (c) => { c.border = all; });
+    }
+    const blob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${camp} stock take ${take.number}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) { $("st-top-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { btn.disabled = false; btn.textContent = "Download the sheet to print (Excel)"; }
 });
 
 // --- Stock on hand -------------------------------------------------------------
