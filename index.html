@@ -135,6 +135,10 @@
   .pick-list { max-height: 50vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
   .pick-list button { text-align: left; }
   .pick-list button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
+  .pick-inv { border: 1px solid var(--sand); border-radius: 6px; margin-top: 10px; background: #fff; }
+  .pick-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; }
+  .pick-head label, .pick-line label { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; margin: 0; color: var(--text); flex: 1 1 200px; font-size: 14px; }
+  .pick-line { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px; padding: 7px 10px; border-top: 1px solid #e6e0da; }
   .read-warning { margin-bottom: 10px; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); font-weight: 600; font-size: 14px; }
   .note-box { margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--warn-bg); color: var(--warn); font-size: 14px; }
   .suggest { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
@@ -221,7 +225,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01b</p>
 </header>
 
 <main>
@@ -440,7 +444,7 @@
    <div id="view-loads" hidden>
     <section class="card">
       <h2>Build a load sheet</h2>
-      <p class="muted">Collects every accepted invoice line for the camp that isn't on a load sheet yet — including lines reallocated to it from other invoices. The quantity is the storeman's handwritten count where there is one, otherwise the printed one. Building again adds new lines to the camp's draft.</p>
+      <p class="muted">Tick what goes on this truck. The list shows every accepted invoice line for the camp that isn't on a load sheet yet, including lines moved to it from other invoices. Anything unticked keeps waiting for a later load sheet. Quantities are in single units, using the storeman's handwritten count where there is one.</p>
       <div class="row">
         <div>
           <label for="ls-camp">Camp</label>
@@ -449,6 +453,7 @@
         <div><button type="button" id="ls-build" disabled>Build load sheet</button></div>
       </div>
       <div class="status" id="ls-waiting"></div>
+      <div id="ls-pick"></div>
       <div id="ls-error"></div>
     </section>
 
@@ -527,6 +532,25 @@
   </div>
 </div>
 
+<!-- Move a waiting or draft line to another camp, all or part -->
+<div class="modal-back" id="move-modal">
+  <div class="modal">
+    <h3>Move to another camp</h3>
+    <div class="muted" id="mv-what"></div>
+    <div class="field"><label for="mv-camp">Goes to</label><select id="mv-camp"></select></div>
+    <div class="field">
+      <label for="mv-units">How many, in single units</label>
+      <input type="text" id="mv-units" inputmode="decimal" class="rc-qty">
+      <div class="hint" id="mv-hint"></div>
+    </div>
+    <div id="move-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="mv-go">Move</button>
+    </div>
+  </div>
+</div>
+
 <!-- Reallocate: this line is another camp's goods -->
 <div class="modal-back" id="realloc-modal">
   <div class="modal">
@@ -536,6 +560,11 @@
     <div class="field">
       <label for="realloc-to">This line goes to</label>
       <select id="realloc-to"></select>
+    </div>
+    <div class="field">
+      <label for="realloc-units">How many, in single units</label>
+      <input type="text" id="realloc-units" inputmode="decimal" class="rc-qty">
+      <div class="hint" id="realloc-hint"></div>
     </div>
     <div id="realloc-error"></div>
     <div class="buttons">
@@ -1218,6 +1247,9 @@ async function openRealloc(line) {
   $("realloc-line").innerHTML = lineSummary(line);
   $("realloc-error").innerHTML = "";
   const home = current.invoice.location_id;
+  const allUnits = Number(line.handwritten_qty ?? line.printed_qty ?? 0) * Number(line.units_per_pack || 1);
+  $("realloc-units").value = fmtQty(allUnits).replace(/,/g, "");
+  $("realloc-hint").textContent = `All ${fmtQty(allUnits)} by default. A smaller number moves that many and leaves the rest here.`;
   $("realloc-to").innerHTML = locations.filter((l) => l.id !== home)
     .map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
   openModal("realloc-modal");
@@ -1225,7 +1257,7 @@ async function openRealloc(line) {
 $("realloc-go").addEventListener("click", async () => {
   $("realloc-go").disabled = true;
   try {
-    render(await api("review_line", { body: { line_id: activeLine.id, decision: "reallocate", location_id: $("realloc-to").value } }));
+    render(await api("review_line", { body: { line_id: activeLine.id, decision: "reallocate", location_id: $("realloc-to").value, units: numText($("realloc-units").value) } }));
     closeModals();
   } catch (e) { $("realloc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
   finally { $("realloc-go").disabled = false; }
@@ -1662,9 +1694,86 @@ function drawWaiting() {
   $("ls-waiting").textContent = n
     ? `${n} accepted line${n > 1 ? "s" : ""} waiting for this camp.${draft ? ` They'll be added to draft load sheet ${draft.number}.` : ""}`
     : `Nothing waiting for this camp.${draft ? ` Draft load sheet ${draft.number} is open below.` : ""}`;
-  $("ls-build").textContent = draft ? "Add to the draft" : "Build load sheet";
   $("ls-build").disabled = !n;
+  drawPick();
 }
+
+// The tick-list (D-021): grouped by invoice; held-back lines start unticked.
+let pickData = [];
+async function drawPick() {
+  const loc = $("ls-camp").value;
+  if (!loc || !(pendingInfo.pending[loc] > 0)) { pickData = []; $("ls-pick").innerHTML = ""; pickCount(); return; }
+  try { pickData = (await api("load_sheet_waiting", { query: `&location_id=${loc}` })).invoices; }
+  catch (e) { $("ls-pick").innerHTML = `<div class="error">${esc(e.message)}</div>`; return; }
+  $("ls-pick").innerHTML = pickData.map((inv) => `<div class="pick-inv">
+      <div class="pick-head">
+        <label><input type="checkbox" data-pick-inv="${inv.id}"> <b>${esc(inv.supplier || "Unknown supplier")} · ${esc(inv.invoice_number || "no number")}</b>
+          <span class="muted">· ${inv.lines.length} line${inv.lines.length > 1 ? "s" : ""}${inv.invoice_date ? " · " + new Date(inv.invoice_date + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}</span></label>
+        <button type="button" class="secondary small" data-pick-open="${inv.id}">Show lines</button>
+      </div>
+      <div class="pick-lines" id="pl-${inv.id}" hidden>${inv.lines.map((l) => `<div class="pick-line">
+        <label><input type="checkbox" data-pick-line="${l.id}" data-of="${inv.id}" ${l.held_back ? "" : "checked"}>
+          <span><b>${fmtQty(l.units)}</b> × ${esc(l.item || l.description)}${l.size ? ` <span class="muted">${esc(l.size)}</span>` : ""}
+          ${l.held_back ? `<span class="chip review">Held back</span>` : ""}${l.not_stock ? `<span class="chip notstock">Not stock</span>` : ""}${l.from_another_camp ? `<span class="muted"> · moved here</span>` : ""}</span></label>
+        <button type="button" class="secondary small" data-pick-move="${l.id}" data-of="${inv.id}">Move</button>
+      </div>`).join("")}</div></div>`).join("");
+  pickCount();
+}
+function pickCount() {
+  const ticked = document.querySelectorAll("[data-pick-line]:checked").length;
+  document.querySelectorAll("[data-pick-inv]").forEach((box) => {
+    const mine = [...document.querySelectorAll(`[data-pick-line][data-of="${box.dataset.pickInv}"]`)];
+    const on = mine.filter((x) => x.checked).length;
+    box.checked = on === mine.length; box.indeterminate = on > 0 && on < mine.length;
+  });
+  const draft = pendingInfo.drafts[$("ls-camp").value];
+  $("ls-build").textContent = ticked ? (draft ? `Add ${ticked} line${ticked > 1 ? "s" : ""} to the draft` : `Build load sheet (${ticked} line${ticked > 1 ? "s" : ""})`) : (draft ? "Add to the draft" : "Build load sheet");
+  $("ls-build").disabled = !ticked;
+}
+$("ls-pick").addEventListener("change", (ev) => {
+  const inv = ev.target.closest("[data-pick-inv]");
+  if (inv) document.querySelectorAll(`[data-pick-line][data-of="${inv.dataset.pickInv}"]`).forEach((x) => { x.checked = inv.checked; });
+  pickCount();
+});
+$("ls-pick").addEventListener("click", (ev) => {
+  const open = ev.target.closest("[data-pick-open]");
+  if (open) {
+    const box = $("pl-" + open.dataset.pickOpen);
+    box.hidden = !box.hidden;
+    open.textContent = box.hidden ? "Show lines" : "Hide lines";
+  }
+  const mv = ev.target.closest("[data-pick-move]");
+  if (mv) {
+    const l = pickData.find((i) => i.id === mv.dataset.of).lines.find((x) => x.id === mv.dataset.pickMove);
+    openMove({ kind: "waiting", id: l.id, units: l.units, what: l.item || l.description, exclude: $("ls-camp").value });
+  }
+});
+
+let moving = null;
+async function openMove(m) {
+  try { await ensureLocations(); } catch { $("ls-error").innerHTML = `<div class="error">${NO_CAMPS}</div>`; return; }
+  moving = m;
+  $("mv-what").textContent = `${m.what} — ${fmtQty(m.units)} units`;
+  $("mv-camp").innerHTML = locations.filter((l) => l.id !== m.exclude).map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  $("mv-units").value = fmtQty(m.units).replace(/,/g, "");
+  $("mv-hint").textContent = `All ${fmtQty(m.units)} by default. A smaller number moves that many and leaves the rest here.`;
+  $("move-error").innerHTML = "";
+  openModal("move-modal");
+}
+$("mv-go").addEventListener("click", async () => {
+  $("move-error").innerHTML = "";
+  $("mv-go").disabled = true;
+  try {
+    const body = { location_id: $("mv-camp").value, units: numText($("mv-units").value) };
+    if (moving.kind === "sheet") drawSheet(await api("move_load_sheet_line", { body: { ...body, line_id: moving.id } }));
+    else await api("move_waiting_line", { body: { ...body, line_id: moving.id } });
+    closeModals();
+    pendingInfo = await api("load_sheet_pending");
+    drawWaiting();
+    loadRecentSheets();
+  } catch (e) { $("move-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { $("mv-go").disabled = false; }
+});
 $("ls-error").addEventListener("click", (ev) => { if (ev.target.id === "ls-retry") refreshLoads(); });
 $("ls-camp").addEventListener("change", async () => {
   drawWaiting();
@@ -1677,7 +1786,7 @@ $("ls-build").addEventListener("click", async () => {
   $("ls-error").innerHTML = "";
   $("ls-build").disabled = true;
   try {
-    drawSheet(await api("build_load_sheet", { body: { location_id: $("ls-camp").value } }));
+    drawSheet(await api("build_load_sheet", { body: { location_id: $("ls-camp").value, line_ids: [...document.querySelectorAll("[data-pick-line]:checked")].map((x) => x.dataset.pickLine) } }));
     pendingInfo = await api("load_sheet_pending");
     drawWaiting();
     loadRecentSheets();
@@ -1744,7 +1853,8 @@ function drawSheet(data) {
       <td class="muted">${sourceText(l)}${adjusted ? `<div class="adj">${esc(l.adjust_note || "")} — ${esc(l.adjuster?.name || "")}</div>` : ""}</td>
       <td>${draft ? `<span class="actions" style="margin:0">
         <button type="button" class="secondary small" data-adjust="${l.id}">Adjust</button>
-        <button type="button" class="secondary small" data-hold="${l.id}">Hold back</button></span>` : ""}</td>
+        <button type="button" class="secondary small" data-hold="${l.id}">Hold back</button>
+        <button type="button" class="secondary small" data-move-sheet="${l.id}">Move</button></span>` : ""}</td>
     </tr>`);
   }
   $("ls-lines").innerHTML = rows.join("") || `<tr><td colspan="5" class="muted">No lines.</td></tr>`;
@@ -1757,8 +1867,12 @@ function drawSheet(data) {
 }
 
 $("ls-lines").addEventListener("click", async (ev) => {
-  const adj = ev.target.closest("[data-adjust]"), hold = ev.target.closest("[data-hold]");
+  const adj = ev.target.closest("[data-adjust]"), hold = ev.target.closest("[data-hold]"), mv = ev.target.closest("[data-move-sheet]");
   $("ls-error").innerHTML = "";
+  if (mv) {
+    const l = sheetOnScreen.lines.find((x) => x.id === mv.dataset.moveSheet);
+    return openMove({ kind: "sheet", id: l.id, units: Number(l.quantity_expected), what: l.stock_items?.name || l.description, exclude: sheetOnScreen.load_sheet.location_id });
+  }
   if (adj) {
     activeLine = sheetOnScreen.lines.find((l) => l.id === adj.dataset.adjust);
     $("adjust-line").textContent = activeLine.stock_items?.name || activeLine.description;
@@ -1769,7 +1883,7 @@ $("ls-lines").addEventListener("click", async (ev) => {
     $("adj-qty").focus();
   }
   if (hold) {
-    if (!confirm("Take this line off the truck? It goes back to waiting for the next load sheet.")) return;
+    if (!confirm("Take this line off the truck? It keeps waiting, unticked, until you choose it for a later load sheet.")) return;
     try { drawSheet(await api("hold_back_line", { body: { line_id: hold.dataset.hold } })); refreshWaitingOnly(); }
     catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
   }
