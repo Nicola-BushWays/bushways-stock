@@ -241,7 +241,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01d</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01e</p>
 </header>
 
 <main>
@@ -2624,7 +2624,8 @@ async function ensureLocations() {
 }
 const NO_CAMPS = "Couldn't load the list of camps. Check your signal, then try again.";
 async function fillOnHandCamps() {
-  if ($("oh-camp").options.length) return;
+  // Fresh figures every visit: stock may have moved since the last one.
+  if ($("oh-camp").options.length) return drawOnHand();
   $("oh-total").hidden = true;
   $("oh-lines").innerHTML = `<tr><td colspan="6" class="muted">Loading camps…</td></tr>`;
   try { await ensureLocations(); }
