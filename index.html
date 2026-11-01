@@ -213,7 +213,7 @@
   .hint { font-size: 12px; color: #7a6e64; margin-top: 4px; }
   .hint.bad { color: var(--bad); font-weight: 600; }
 
-  .views { display: flex; gap: 6px; }
+  .views { display: flex; flex-wrap: wrap; gap: 6px; }
   .views button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
   tr.group td { background: var(--offwhite); font-weight: 900; color: var(--forest); font-size: 12px; letter-spacing: .03em; }
   .adj { color: var(--bronze); font-size: 12px; font-weight: 600; }
@@ -241,7 +241,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01e</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01f</p>
 </header>
 
 <main>
@@ -273,6 +273,7 @@
         <button type="button" class="secondary small" data-tab="loads" aria-pressed="false">Load sheets</button>
         <button type="button" class="secondary small" data-tab="receive" aria-pressed="false">Receiving</button>
         <button type="button" class="secondary small" data-tab="returns" aria-pressed="false">Returns</button>
+        <button type="button" class="secondary small" data-tab="transfers" aria-pressed="false">Transfers</button>
         <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
       </span>
       <span>Signed in as <span class="who" id="who"></span> <span class="muted" id="who-extra"></span>
@@ -428,6 +429,44 @@
     <section class="card">
       <h2>Returns sheets</h2>
       <div class="recent-list" id="rt-list"><span class="muted">Loading…</span></div>
+    </section>
+   </div>
+
+   <!-- Transfers: one location helping another with a shortage -->
+   <div id="view-transfers" hidden>
+    <section class="card">
+      <h2>Transfer stock to another camp</h2>
+      <p class="muted">When one camp helps another with a shortage. Stock leaves the sending camp when you send the transfer, and enters the other camp when they receive it.</p>
+      <div class="row">
+        <div><label for="tf-from">From</label><select id="tf-from"></select></div>
+        <div><label for="tf-to">To</label><select id="tf-to"></select></div>
+        <div><button type="button" class="secondary" id="tf-add">+ Add an item</button></div>
+      </div>
+      <div id="tf-error"></div>
+    </section>
+    <section class="card" id="tf-card" hidden>
+      <h2 id="tf-title"></h2>
+      <div class="muted" id="tf-meta"></div>
+      <div class="creator-list" id="tf-lines" style="margin-top:12px"></div>
+      <div id="tf-finish" hidden>
+        <div class="row" style="margin-top:14px">
+          <div><label for="tf-date">Date the goods arrived</label><input type="date" id="tf-date"></div>
+          <div id="tf-period-box" hidden><label for="tf-period">Book to stock month</label><select id="tf-period"></select></div>
+        </div>
+      </div>
+      <div class="accept-bar" id="tf-bar"></div>
+      <div id="tf-action-error"></div>
+    </section>
+    <section class="card">
+      <h2>Transfers</h2>
+      <div class="recent-list" id="tf-list"><span class="muted">Loading…</span></div>
+    </section>
+    <section class="card" id="tf-accounts" hidden>
+      <h2>For accounts: intercompany invoices</h2>
+      <p class="muted">Every received transfer booked to the month, with its value in pula excluding VAT. Raise the invoice as usual, then tick it off here.</p>
+      <div class="row"><div><label for="tfa-month">Stock month</label><input type="text" id="tfa-month" placeholder="2026-11" inputmode="numeric" class="rc-qty" style="width:110px"></div>
+        <div><button type="button" class="secondary small" id="tfa-show">Show</button></div></div>
+      <div class="creator-list" id="tfa-list" style="margin-top:10px"></div>
     </section>
    </div>
 
@@ -634,6 +673,38 @@
     <div class="pick-list" id="rti-list"></div>
     <div id="rti-error"></div>
     <div class="buttons"><button type="button" class="secondary" data-close>Cancel</button></div>
+  </div>
+</div>
+
+<!-- Add an item to a transfer -->
+<div class="modal-back" id="tf-add-modal">
+  <div class="modal">
+    <h3>Add an item to transfer</h3>
+    <div class="muted" id="tfm-what"></div>
+    <div class="field"><label for="tfm-search">Item</label><input type="search" id="tfm-search" placeholder="e.g. tomato sauce"><div class="pick-list" id="tfm-list"></div></div>
+    <div class="field"><label for="tfm-qty">How many, in single units</label><input type="text" id="tfm-qty" inputmode="decimal" class="rc-qty"></div>
+    <div id="tfm-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="tfm-go">Add to transfer</button>
+    </div>
+  </div>
+</div>
+
+<!-- Correct a transfer's received count -->
+<div class="modal-back" id="tfc-modal">
+  <div class="modal">
+    <h3>Correct the received count</h3>
+    <div class="muted" id="tfc-what"></div>
+    <div class="row" style="margin-top:10px">
+      <div><label for="tfc-qty">Correct count received</label><input type="text" id="tfc-qty" inputmode="decimal" class="rc-qty"></div>
+      <div style="flex:1"><label for="tfc-reason">Why</label><input type="text" id="tfc-reason" autocomplete="off" placeholder="e.g. 1 box found in the vehicle"></div>
+    </div>
+    <div id="tfc-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="tfc-go">Save correction</button>
+    </div>
   </div>
 </div>
 
@@ -971,11 +1042,13 @@ function showView(name) {
   $("view-stock").hidden = name !== "stock";
   $("view-receive").hidden = name !== "receive";
   $("view-returns").hidden = name !== "returns";
+  $("view-transfers").hidden = name !== "transfers";
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   if (name === "loads") refreshLoads();
   if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
   if (name === "receive") loadReceiving();
   if (name === "returns") loadReturns();
+  if (name === "transfers") loadTransfers();
 }
 document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.tab)));
 
@@ -2615,6 +2688,270 @@ function drawRtPrint(data) {
     <table><thead><tr><th></th><th>Item</th><th>Size</th><th>Why</th><th class="num">Sent</th><th class="num">Received</th></tr></thead><tbody>${rows}</tbody></table>
     <p>Sent by: ______________________ &nbsp; Checked at Base by: ______________________ &nbsp; Date: ____________</p>`;
 }
+
+// --- Transfers ---------------------------------------------------------------------
+
+let tfInfo = { transfers: [], can_office: false, everywhere: false, home_location_id: null };
+let tfSheet = null, tfOnHand = [], tfPick = null, tfCorrecting = null;
+const tfPhotos = new Map();
+const tfAt = (loc) => tfInfo.everywhere || tfInfo.home_location_id === loc;
+const tfProblem = (msg) => {
+  $("tf-action-error").innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : "";
+  if (msg) $("tf-action-error").scrollIntoView({ behavior: "smooth", block: "center" });
+};
+async function loadTransfers() {
+  $("tf-error").innerHTML = "";
+  try {
+    await ensureLocations();
+    tfInfo = await api("transfers");
+    const senders = tfInfo.everywhere ? locations : locations.filter((l) => l.id === tfInfo.home_location_id);
+    const was = $("tf-from").value;
+    $("tf-from").innerHTML = senders.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+    $("tf-from").value = was && senders.some((l) => l.id === was) ? was : (senders.find((l) => l.name === DEFAULT_CAMP) || senders[0] || {}).id || "";
+    fillTfTo();
+    drawTfList();
+    $("tf-accounts").hidden = !tfInfo.can_office;
+    if (tfInfo.can_office && !$("tfa-month").value) { $("tfa-month").value = isoToday().slice(0, 7); drawTfAccounts(); }
+  } catch (e) { $("tf-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+function fillTfTo() {
+  const was = $("tf-to").value, from = $("tf-from").value;
+  const options = locations.filter((l) => l.id !== from);
+  $("tf-to").innerHTML = `<option value="">Choose…</option>` + options.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  if (options.some((l) => l.id === was)) $("tf-to").value = was;
+}
+$("tf-from").addEventListener("change", fillTfTo);
+function drawTfList() {
+  const day = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const route = (t) => `${esc(t.origin?.name || "")} → ${esc(t.dest?.name || "")}`;
+  const row = (t, cls, text) => `<button type="button" class="${cls}" data-tf-open="${t.id}">Transfer ${t.number} · ${route(t)}<span class="rc-sub">${t.stock_transfer_lines?.[0]?.count ?? 0} lines · ${text}</span></button>`;
+  const groups = [
+    ["Being put together", (t) => t.status === "draft", (t) => row(t, "secondary rc-open", "not sent yet")],
+    ["On the way", (t) => t.status === "sent", (t) => row(t, "rc-waiting", `sent ${day(t.sent_at)}${tfAt(t.to_location_id) ? " · tap to receive" : ""}`)],
+    ["Received — still open", (t) => t.status === "received" && !t.completed_at, (t) => row(t, "secondary rc-open", `received ${t.received_on ? day(t.received_on + "T12:00:00") : ""} · check, correct, then Finish`)],
+    ["Complete", (t) => !!t.completed_at, (t) => row(t, "secondary rc-done", `✓ finished ${day(t.completed_at)}`)],
+  ];
+  $("tf-list").innerHTML = groups.map(([label, match, draw]) => {
+    const items = tfInfo.transfers.filter(match);
+    return items.length ? `<div class="rc-group-label" style="margin-top:8px">${label} (${items.length})</div>` + items.map(draw).join("") : "";
+  }).join("") || `<span class="muted">No transfers yet.</span>`;
+}
+$("tf-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-tf-open]");
+  if (!b) return;
+  try { drawTfSheet(await api("transfer", { query: `&id=${b.dataset.tfOpen}` })); $("tf-card").scrollIntoView({ behavior: "smooth" }); }
+  catch (e) { $("tf-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("tf-add").addEventListener("click", async () => {
+  $("tf-error").innerHTML = "";
+  if (!$("tf-from").value) return;
+  if (!$("tf-to").value) { $("tf-error").innerHTML = `<div class="error">Choose where it's going first.</div>`; return; }
+  try {
+    tfOnHand = (await api("stock_on_hand", { query: `&location_id=${$("tf-from").value}` })).items;
+    tfPick = null;
+    $("tfm-what").textContent = `${$("tf-from").selectedOptions[0].text} → ${$("tf-to").selectedOptions[0].text}. Search what the sending camp holds.`;
+    $("tfm-search").value = ""; $("tfm-qty").value = ""; $("tfm-list").innerHTML = ""; $("tfm-error").innerHTML = "";
+    openModal("tf-add-modal");
+    $("tfm-search").focus();
+  } catch (e) { $("tf-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("tfm-search").addEventListener("input", () => {
+  const words = $("tfm-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = !words.length ? [] : tfOnHand.filter((i) => words.every((w) => `${i.name} ${i.category} ${i.standard_size || ""}`.toLowerCase().includes(w))).slice(0, 20);
+  $("tfm-list").innerHTML = hits.map((i) => `<button type="button" class="secondary" data-tfm-item="${i.id}" aria-pressed="${tfPick?.id === i.id}">${esc(i.name)}${i.standard_size ? ` · ${esc(i.standard_size)}` : ""} <span class="muted">· holds ${fmtQty(i.quantity)}</span></button>`).join("")
+    || (words.length ? `<span class="muted">The sending camp doesn't hold anything matching that.</span>` : "");
+});
+$("tfm-list").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-tfm-item]");
+  if (!b) return;
+  tfPick = tfOnHand.find((i) => i.id === b.dataset.tfmItem);
+  document.querySelectorAll("#tfm-list [data-tfm-item]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+});
+$("tfm-go").addEventListener("click", async () => {
+  $("tfm-error").innerHTML = "";
+  if (!tfPick) { $("tfm-error").innerHTML = `<div class="error">Choose the item from the list.</div>`; return; }
+  try {
+    drawTfSheet(await api("add_transfer_line", { body: { from_location_id: $("tf-from").value, to_location_id: $("tf-to").value, stock_item_id: tfPick.id, quantity: numText($("tfm-qty").value) } }));
+    closeModals();
+    loadTransfers();
+  } catch (e) { $("tfm-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+function drawTfSheet(data) {
+  tfSheet = data;
+  tfPhotos.clear();
+  tfProblem("");
+  const t = data.transfer;
+  const when = (x) => new Date(x).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const receiving = t.status === "sent" && tfAt(t.to_location_id);
+  const canCorrect = t.status === "received" && tfAt(t.to_location_id) && (!t.completed_at || session.person.base_level);
+  const stage = t.status === "draft" ? "Being put together" : t.status === "sent" ? "On the way" : t.completed_at ? "Complete" : "Received";
+  $("tf-card").hidden = false;
+  $("tf-title").textContent = `Transfer ${t.number} · ${t.origin?.name || ""} → ${t.dest?.name || ""} · ${stage}`;
+  $("tf-meta").textContent = t.status === "draft" ? `Started by ${t.creator?.name || ""}.`
+    : `Sent by ${t.sender?.name || ""}, ${when(t.sent_at)}.` + (t.received_at ? ` Received ${t.received_on} by ${t.receiver?.name || ""}.` : "") + (t.completed_at ? ` Finished by ${t.completer?.name || ""}.` : "");
+  $("tf-lines").innerHTML = data.lines.map((l) => {
+    const it = l.stock_items || {};
+    const size = it.item_type === "variable_weight" ? "kg" : it.standard_size || "";
+    let extra = "";
+    if (t.status === "draft") extra = `<div class="actions"><button type="button" class="secondary small" data-tf-remove="${l.id}">Remove</button></div>`;
+    if (receiving) extra = `<div style="margin-top:6px"><label class="muted" style="font-weight:400">Received <input type="text" inputmode="decimal" class="rc-qty" id="tfq-${l.id}" aria-label="Received"></label></div>
+      <div style="margin-top:6px"><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" id="tfd-${l.id}" data-tf-damage="${l.id}"> Damaged</label>
+        <div class="rc-damage" id="tfdx-${l.id}" hidden>
+          <span class="muted">List the quantity and describe the damage:</span>
+          <label class="muted dq" style="font-weight:400">How many are damaged? <input type="text" inputmode="decimal" class="rc-qty" id="tfdq-${l.id}"></label>
+          <input type="text" id="tfn-${l.id}" placeholder="Describe the damage, e.g. tins dented" autocomplete="off">
+          <span id="tfp-${l.id}">${photoButtons(`data-tf-photo="${l.id}"`)}</span>
+        </div></div>`;
+    if (t.status === "received") {
+      const short = Number(l.quantity_received) < Number(l.quantity_sent);
+      extra = `<div class="muted">Received <b>${fmtQty(l.quantity_received)}</b></div>`
+        + (short ? `<div class="short">${fmtQty(l.quantity_sent - l.quantity_received)} short in transit, for Base to find</div>` : "")
+        + (l.damaged ? `<div class="short">${fmtQty(l.damaged_quantity || 0)} damaged: ${esc(l.damage_note || "")}</div>` : "")
+        + (l.damage_photo_url ? `<div><img class="thumb" src="${esc(l.damage_photo_url)}" data-photo-url="${esc(l.damage_photo_url)}" alt="Damage photo"></div>` : "")
+        + (l.stock_transfer_corrections || []).map((c) => `<div class="corr">Corrected ${fmtQty(c.old_quantity)} → ${fmtQty(c.new_quantity)} by ${esc(c.corrector?.name || "")}: ${esc(c.reason)}</div>`).join("")
+        + (canCorrect ? `<div class="actions"><button type="button" class="secondary small" data-tf-correct="${l.id}">Correct</button></div>` : "");
+    }
+    return `<div class="extra"><span style="flex:1 1 100%"><b>${fmtQty(l.quantity_sent)} × ${esc(it.name || "")}</b>${size ? ` <span class="muted">${esc(size)}</span>` : ""}${extra}</span></div>`;
+  }).join("") || `<span class="muted">Nothing on it yet. Use + Add an item above.</span>`;
+
+  $("tf-finish").hidden = !receiving;
+  if (receiving) {
+    const sentOn = new Date(new Date(t.sent_at).getTime() + 2 * 3600_000).toISOString().slice(0, 10);
+    tfSheet.sentOn = sentOn;
+    $("tf-date").min = sentOn; $("tf-date").max = isoToday();
+    $("tf-date").value = isoToday() < sentOn ? sentOn : isoToday();
+    drawTfPeriod();
+  }
+  const print = `<button type="button" class="secondary" id="tf-print">Print transfer note</button>`;
+  $("tf-bar").innerHTML =
+    t.status === "draft" ? `<button type="button" id="tf-send" ${data.lines.length ? "" : "disabled"}>Send transfer</button><button type="button" class="secondary" id="tf-discard">Discard</button><span class="muted">Sending takes these out of the sending camp's stock and locks the transfer.</span>`
+    : receiving ? `<button type="button" class="secondary" id="tf-all">Receive all</button><button type="button" id="tf-receive">Confirm received</button>${print}`
+    : t.status === "sent" ? `${print}<span class="muted">Waiting for ${esc(t.dest?.name || "the other camp")} to receive it.</span>`
+    : t.completed_at ? `<span class="chip matched" style="font-size:14px;padding:4px 12px">Complete ✓</span>${print}`
+    : tfAt(t.to_location_id) ? `<button type="button" class="primary" id="tf-complete">Finish — nothing more to change</button><span class="muted">After this only Base can change it.</span>${print}`
+    : `${print}<span class="muted">${esc(t.dest?.name || "The other camp")} is checking it.</span>`;
+}
+function drawTfPeriod() {
+  const rec = $("tf-date").value, sent = tfSheet?.sentOn || "";
+  const differ = rec && sent && rec.slice(0, 7) !== sent.slice(0, 7);
+  $("tf-period-box").hidden = !differ;
+  if (differ) $("tf-period").innerHTML = `<option value="${sent.slice(0, 7)}-01">${monthName(sent.slice(0, 7) + "-01")} — the month it was sent</option><option value="${rec.slice(0, 7)}-01">${monthName(rec.slice(0, 7) + "-01")} — the month it arrived</option>`;
+}
+$("tf-date").addEventListener("change", drawTfPeriod);
+function drawTfPhoto(id) {
+  const url = tfPhotos.get(id);
+  $("tfp-" + id).innerHTML = url
+    ? `<img class="thumb" src="${url}" data-photo-url="${url}" alt="Damage photo"> ${photoButtons(`data-tf-photo="${id}"`, "another")} <button type="button" class="secondary small" data-tf-photo-remove="${id}">Remove</button>`
+    : photoButtons(`data-tf-photo="${id}"`);
+}
+$("tf-lines").addEventListener("change", (ev) => {
+  const d = ev.target.closest("[data-tf-damage]");
+  if (d) $("tfdx-" + d.dataset.tfDamage).hidden = !d.checked;
+});
+$("tf-lines").addEventListener("click", async (ev) => {
+  const u = ev.target.closest("[data-photo-url]");
+  if (u) return openViewer(u.dataset.photoUrl);
+  const ph = ev.target.closest("[data-tf-photo]");
+  if (ph) {
+    const id = ph.dataset.tfPhoto;
+    return pickPhoto(ph.dataset.camera === "1", false, async (files) => { tfPhotos.set(id, await shrink(files[0])); drawTfPhoto(id); });
+  }
+  const pr = ev.target.closest("[data-tf-photo-remove]");
+  if (pr) { tfPhotos.delete(pr.dataset.tfPhotoRemove); return drawTfPhoto(pr.dataset.tfPhotoRemove); }
+  const co = ev.target.closest("[data-tf-correct]");
+  if (co) {
+    tfCorrecting = tfSheet.lines.find((l) => l.id === co.dataset.tfCorrect);
+    $("tfc-what").textContent = `${tfCorrecting.stock_items?.name || ""} — sent ${fmtQty(tfCorrecting.quantity_sent)}, received ${fmtQty(tfCorrecting.quantity_received)}`;
+    $("tfc-qty").value = ""; $("tfc-reason").value = ""; $("tfc-error").innerHTML = "";
+    return openModal("tfc-modal");
+  }
+  const rm = ev.target.closest("[data-tf-remove]");
+  if (rm) {
+    try { drawTfSheet(await api("remove_transfer_line", { body: { line_id: rm.dataset.tfRemove } })); loadTransfers(); }
+    catch (e) { tfProblem(e.message); }
+  }
+});
+$("tfc-go").addEventListener("click", async () => {
+  $("tfc-error").innerHTML = "";
+  try {
+    drawTfSheet(await api("correct_transfer_line", { body: { line_id: tfCorrecting.id, new_quantity: numText($("tfc-qty").value), reason: $("tfc-reason").value } }));
+    closeModals();
+  } catch (e) { $("tfc-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("tf-bar").addEventListener("click", async (ev) => {
+  const id = tfSheet?.transfer?.id;
+  tfProblem("");
+  try {
+    if (ev.target.id === "tf-print") { drawTfPrint(tfSheet); window.print(); }
+    if (ev.target.id === "tf-all") tfSheet.lines.forEach((l) => { const i = $("tfq-" + l.id); if (i && !i.value.trim()) i.value = fmtQty(l.quantity_sent).replace(/,/g, ""); });
+    if (ev.target.id === "tf-send") {
+      if (!confirm("Send this transfer? These items leave the sending camp's stock, and it locks.")) return;
+      drawTfSheet(await api("send_transfer", { body: { transfer_id: id } }));
+      loadTransfers();
+    }
+    if (ev.target.id === "tf-discard") {
+      if (!confirm("Discard this transfer? Nothing has left stock yet.")) return;
+      await api("discard_transfer", { body: { transfer_id: id } });
+      tfSheet = null; $("tf-card").hidden = true;
+      loadTransfers();
+    }
+    if (ev.target.id === "tf-receive") {
+      const lines = tfSheet.lines.map((l) => {
+        const hurt = $("tfd-" + l.id).checked;
+        return { id: l.id, quantity_received: numText($("tfq-" + l.id).value), damaged: hurt, damaged_quantity: hurt ? numText($("tfdq-" + l.id).value) : null, damage_note: hurt ? $("tfn-" + l.id).value : null, damage_photo_data_url: hurt ? tfPhotos.get(l.id) || null : null };
+      });
+      if (lines.some((l) => !/^\d+(\.\d+)?$/.test(l.quantity_received))) return tfProblem("Every received count must be a number, 0 or more. Receive all fills them with what was sent.");
+      if (lines.some((l) => l.damaged && (!(Number(l.damaged_quantity) > 0) || !String(l.damage_note || "").trim()))) return tfProblem("For each damaged line, say how many are damaged and describe the damage.");
+      if (!confirm("Confirm what arrived? It goes into this camp's stock.")) return;
+      drawTfSheet(await api("receive_transfer", { body: { transfer_id: id, received_on: $("tf-date").value, stock_period: $("tf-period-box").hidden ? null : $("tf-period").value, lines } }));
+      loadTransfers();
+    }
+    if (ev.target.id === "tf-complete") {
+      if (!confirm("Finish this transfer? After this only Base can change it.")) return;
+      const data = await api("complete_transfer", { body: { transfer_id: id } });
+      tfSheet = null; $("tf-card").hidden = true;
+      await loadTransfers();
+      $("tf-error").innerHTML = `<div class="notice">Transfer ${data.transfer.number} is complete.</div>`;
+      $("view-transfers").scrollIntoView({ behavior: "smooth" });
+    }
+  } catch (e) { tfProblem(e.message); }
+});
+function drawTfPrint(data) {
+  const t = data.transfer;
+  const rows = data.lines.map((l) => `<tr><td class="box">☐</td><td>${esc(l.stock_items?.name || "")}</td><td>${esc(l.stock_items?.item_type === "variable_weight" ? "kg" : l.stock_items?.standard_size || "")}</td><td class="num">${fmtQty(l.quantity_sent)}</td><td class="num"></td></tr>`).join("");
+  $("print-sheet").innerHTML = `
+    <h1>Bush Ways · Transfer ${t.number}: ${esc(t.origin?.name || "")} to ${esc(t.dest?.name || "")}</h1>
+    <div>${t.sent_at ? `Sent ${new Date(t.sent_at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}${t.sender?.name ? " by " + esc(t.sender.name) : ""}.` : "Not sent yet."} Tick each line as it arrives; write what actually arrived if it differs.</div>
+    <table><thead><tr><th></th><th>Item</th><th>Size</th><th class="num">Sent</th><th class="num">Received</th></tr></thead><tbody>${rows}</tbody></table>
+    <p>Sent by: ______________________ &nbsp; Received by: ______________________ &nbsp; Date: ____________</p>`;
+}
+async function drawTfAccounts() {
+  const month = $("tfa-month").value.trim();
+  $("tfa-list").innerHTML = `<span class="muted">Loading…</span>`;
+  try {
+    const { transfers, total } = await api("transfers_for_accounts", { query: `&month=${encodeURIComponent(month)}` });
+    $("tfa-list").innerHTML = transfers.map((t) => `<div class="extra"><span style="flex:1 1 200px">
+        <b>Transfer ${t.number}: ${esc(t.origin?.name || "")} → ${esc(t.dest?.name || "")}</b> <span class="muted">· received ${esc(t.received_on || "")}${t.completed_at ? "" : " · still open"}</span>
+        <div>P ${money(t.value_received)}${t.value_sent !== t.value_received ? ` <span class="short">sent P ${money(t.value_sent)}: check the shortfall</span>` : ""}${t.uncosted ? ` <span class="muted">· some items have no cost</span>` : ""}</div>
+        <div class="muted">${(t.stock_transfer_lines || []).map((l) => `${fmtQty(l.quantity_received ?? 0)} × ${esc(l.stock_items?.name || "")}`).join(", ")}</div></span>
+      <span>${t.invoiced_at ? `<span class="chip matched">Invoiced${t.invoice_ref ? " " + esc(t.invoice_ref) : ""}</span> <button type="button" class="secondary small" data-tfa-undo="${t.id}">Undo</button>` : `<button type="button" class="secondary small" data-tfa-mark="${t.id}">Mark invoiced</button>`}</span></div>`).join("")
+      + (transfers.length ? `<div class="oh-total"><b>Total for the month</b><b class="oh-total-figure">P ${money(total)}</b></div>` : `<span class="muted">No received transfers booked to this month.</span>`);
+  } catch (e) { $("tfa-list").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+$("tfa-show").addEventListener("click", drawTfAccounts);
+$("tfa-list").addEventListener("click", async (ev) => {
+  const m = ev.target.closest("[data-tfa-mark]"), u = ev.target.closest("[data-tfa-undo]");
+  if (!m && !u) return;
+  try {
+    if (m) {
+      const ref = prompt("Invoice number (optional):", "");
+      if (ref == null) return;
+      await api("mark_transfer_invoiced", { body: { transfer_id: m.dataset.tfaMark, invoiced: true, invoice_ref: ref } });
+    } else await api("mark_transfer_invoiced", { body: { transfer_id: u.dataset.tfaUndo, invoiced: false } });
+    drawTfAccounts();
+  } catch (e) { $("tfa-list").insertAdjacentHTML("afterbegin", `<div class="error">${esc(e.message)}</div>`); }
+});
 
 // --- Stock on hand -------------------------------------------------------------
 
