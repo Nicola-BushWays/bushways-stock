@@ -242,7 +242,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01g</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01h</p>
 </header>
 
 <main>
@@ -462,9 +462,9 @@
       <h2>Transfers</h2>
       <div class="recent-list" id="tf-list"><span class="muted">Loading…</span></div>
     </section>
-    <section class="card" id="tf-accounts" hidden>
-      <h2>For accounts: intercompany invoices</h2>
-      <p class="muted">Every received transfer booked to the month, with its value in pula excluding VAT. Raise the invoice as usual, then tick it off here.</p>
+    <section class="card" id="tf-accounts">
+      <h2>Intercompany invoices</h2>
+      <p class="muted">Every received transfer booked to the month, with its value in pula excluding VAT. The sending camp raises the invoice using the reference shown, then marks it here.</p>
       <div class="row"><div><label for="tfa-month">Stock month</label><input type="text" id="tfa-month" placeholder="2026-11" inputmode="numeric" class="rc-qty" style="width:110px"></div>
         <div><button type="button" class="secondary small" id="tfa-show">Show</button></div></div>
       <div class="creator-list" id="tfa-list" style="margin-top:10px"></div>
@@ -2711,8 +2711,7 @@ async function loadTransfers() {
     $("tf-from").value = was && senders.some((l) => l.id === was) ? was : (senders.find((l) => l.name === DEFAULT_CAMP) || senders[0] || {}).id || "";
     fillTfTo();
     drawTfList();
-    $("tf-accounts").hidden = !tfInfo.can_office;
-    if (tfInfo.can_office && !$("tfa-month").value) { $("tfa-month").value = isoToday().slice(0, 7); drawTfAccounts(); }
+    if (!$("tfa-month").value) { $("tfa-month").value = isoToday().slice(0, 7); drawTfAccounts(); }
   } catch (e) { $("tf-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 }
 function fillTfTo() {
@@ -2790,7 +2789,7 @@ function drawTfSheet(data) {
   $("tf-card").hidden = false;
   $("tf-title").textContent = `Transfer ${t.number} · ${t.origin?.name || ""} → ${t.dest?.name || ""} · ${stage}`;
   $("tf-meta").textContent = t.status === "draft" ? `Started by ${t.creator?.name || ""}.`
-    : `Sent by ${t.sender?.name || ""}, ${when(t.sent_at)}.` + (t.received_at ? ` Received ${t.received_on} by ${t.receiver?.name || ""}.` : "") + (t.completed_at ? ` Finished by ${t.completer?.name || ""}.` : "");
+    : `Reference ${data.reference || ""}. Sent by ${t.sender?.name || ""}, ${when(t.sent_at)}.` + (t.received_at ? ` Received ${t.received_on} by ${t.receiver?.name || ""}.` : "") + (t.completed_at ? ` Finished by ${t.completer?.name || ""}.` : "");
   $("tf-lines").innerHTML = data.lines.map((l) => {
     const it = l.stock_items || {};
     const size = it.item_type === "variable_weight" ? "kg" : it.standard_size || "";
@@ -2923,6 +2922,7 @@ function drawTfPrint(data) {
   const rows = data.lines.map((l) => `<tr><td class="box">☐</td><td>${esc(l.stock_items?.name || "")}</td><td>${esc(l.stock_items?.item_type === "variable_weight" ? "kg" : l.stock_items?.standard_size || "")}</td><td class="num">${fmtQty(l.quantity_sent)}</td><td class="num"></td></tr>`).join("");
   $("print-sheet").innerHTML = `
     <h1>Bush Ways · Transfer ${t.number}: ${esc(t.origin?.name || "")} to ${esc(t.dest?.name || "")}</h1>
+    ${data.reference ? `<div><b>Reference ${esc(data.reference)}</b></div>` : ""}
     <div>${t.sent_at ? `Sent ${new Date(t.sent_at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}${t.sender?.name ? " by " + esc(t.sender.name) : ""}.` : "Not sent yet."} Tick each line as it arrives; write what actually arrived if it differs.</div>
     <table><thead><tr><th></th><th>Item</th><th>Size</th><th class="num">Sent</th><th class="num">Received</th></tr></thead><tbody>${rows}</tbody></table>
     <p>Sent by: ______________________ &nbsp; Received by: ______________________ &nbsp; Date: ____________</p>`;
@@ -2933,10 +2933,10 @@ async function drawTfAccounts() {
   try {
     const { transfers, total } = await api("transfers_for_accounts", { query: `&month=${encodeURIComponent(month)}` });
     $("tfa-list").innerHTML = transfers.map((t) => `<div class="extra"><span style="flex:1 1 200px">
-        <b>Transfer ${t.number}: ${esc(t.origin?.name || "")} → ${esc(t.dest?.name || "")}</b> <span class="muted">· received ${esc(t.received_on || "")}${t.completed_at ? "" : " · still open"}</span>
+        <b>${esc(t.reference || "Transfer " + t.number)}</b> <span class="muted">${esc(t.origin?.name || "")} → ${esc(t.dest?.name || "")} · received ${esc(t.received_on || "")}${t.completed_at ? "" : " · still open"}</span>
         <div>P ${money(t.value_received)}${t.value_sent !== t.value_received ? ` <span class="short">sent P ${money(t.value_sent)}: check the shortfall</span>` : ""}${t.uncosted ? ` <span class="muted">· some items have no cost</span>` : ""}</div>
         <div class="muted">${(t.stock_transfer_lines || []).map((l) => `${fmtQty(l.quantity_received ?? 0)} × ${esc(l.stock_items?.name || "")}`).join(", ")}</div></span>
-      <span>${t.invoiced_at ? `<span class="chip matched">Invoiced${t.invoice_ref ? " " + esc(t.invoice_ref) : ""}</span> <button type="button" class="secondary small" data-tfa-undo="${t.id}">Undo</button>` : `<button type="button" class="secondary small" data-tfa-mark="${t.id}">Mark invoiced</button>`}</span></div>`).join("")
+      <span>${t.invoiced_at ? `<span class="chip matched">Invoiced</span> <button type="button" class="secondary small" data-tfa-undo="${t.id}">Undo</button>` : `<button type="button" class="secondary small" data-tfa-mark="${t.id}">Mark invoiced</button>`}</span></div>`).join("")
       + (transfers.length ? `<div class="oh-total"><b>Total for the month</b><b class="oh-total-figure">P ${money(total)}</b></div>` : `<span class="muted">No received transfers booked to this month.</span>`);
   } catch (e) { $("tfa-list").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 }
@@ -2946,9 +2946,7 @@ $("tfa-list").addEventListener("click", async (ev) => {
   if (!m && !u) return;
   try {
     if (m) {
-      const ref = prompt("Invoice number (optional):", "");
-      if (ref == null) return;
-      await api("mark_transfer_invoiced", { body: { transfer_id: m.dataset.tfaMark, invoiced: true, invoice_ref: ref } });
+      await api("mark_transfer_invoiced", { body: { transfer_id: m.dataset.tfaMark, invoiced: true } });
     } else await api("mark_transfer_invoiced", { body: { transfer_id: u.dataset.tfaUndo, invoiced: false } });
     drawTfAccounts();
   } catch (e) { $("tfa-list").insertAdjacentHTML("afterbegin", `<div class="error">${esc(e.message)}</div>`); }
