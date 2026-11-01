@@ -241,7 +241,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01c</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01d</p>
 </header>
 
 <main>
@@ -272,6 +272,7 @@
         <button type="button" class="secondary small" data-tab="invoices" aria-pressed="true">Invoices</button>
         <button type="button" class="secondary small" data-tab="loads" aria-pressed="false">Load sheets</button>
         <button type="button" class="secondary small" data-tab="receive" aria-pressed="false">Receiving</button>
+        <button type="button" class="secondary small" data-tab="returns" aria-pressed="false">Returns</button>
         <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
       </span>
       <span>Signed in as <span class="who" id="who"></span> <span class="muted" id="who-extra"></span>
@@ -396,6 +397,37 @@
         <div>
         </div>
       </div>
+    </section>
+   </div>
+
+   <!-- Returns: goods going back from a camp to Maun -->
+   <div id="view-returns" hidden>
+    <section class="card">
+      <h2>Return goods to Maun</h2>
+      <p class="muted">For damaged goods, wrong items or excess going back on the truck. Stock leaves the camp when you send the returns sheet.</p>
+      <div class="row">
+        <div><label for="rt-camp">Returning from</label><select id="rt-camp"></select></div>
+        <div><button type="button" class="secondary" id="rt-add">+ Add an item</button></div>
+      </div>
+      <div id="rt-extras" style="margin-top:12px"></div>
+      <div id="rt-error"></div>
+    </section>
+    <section class="card" id="rt-card" hidden>
+      <h2 id="rt-title"></h2>
+      <div class="muted" id="rt-meta"></div>
+      <div class="creator-list" id="rt-lines" style="margin-top:12px"></div>
+      <div id="rt-finish" hidden>
+        <div class="row" style="margin-top:14px">
+          <div><label for="rt-date">Date the goods arrived</label><input type="date" id="rt-date"></div>
+          <div id="rt-period-box" hidden><label for="rt-period">Book to stock month</label><select id="rt-period"></select></div>
+        </div>
+      </div>
+      <div class="accept-bar" id="rt-bar"></div>
+      <div id="rt-action-error"></div>
+    </section>
+    <section class="card">
+      <h2>Returns sheets</h2>
+      <div class="recent-list" id="rt-list"><span class="muted">Loading…</span></div>
     </section>
    </div>
 
@@ -565,6 +597,43 @@
       <button type="button" class="secondary" data-close>Cancel</button>
       <button type="button" id="mv-go">Move</button>
     </div>
+  </div>
+</div>
+
+<!-- Add an item to a returns sheet -->
+<div class="modal-back" id="rt-add-modal">
+  <div class="modal">
+    <h3>Add an item to return</h3>
+    <div class="muted" id="rta-what">Search what this camp holds.</div>
+    <div class="field" id="rta-search-box">
+      <label for="rta-search">Item</label>
+      <input type="search" id="rta-search" placeholder="e.g. tomato sauce">
+      <div class="pick-list" id="rta-list"></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div id="rta-qty-box"><label for="rta-qty">How many, in single units</label><input type="text" id="rta-qty" inputmode="decimal" class="rc-qty"></div>
+      <div><label for="rta-reason">Why it's going back</label>
+        <select id="rta-reason"><option value="damaged">Damaged</option><option value="wrong_item">Wrong item</option><option value="excess">Excess</option><option value="other">Other</option></select></div>
+    </div>
+    <div class="field"><label for="rta-note">Note</label><input type="text" id="rta-note" autocomplete="off" placeholder="e.g. tins dented in transit"></div>
+    <div class="field"><span id="rta-photo-btns"><button type="button" class="secondary small" data-rta-photo="1">Take photo</button> <button type="button" class="secondary small" data-rta-photo="0">From gallery</button></span> <span id="rta-photo"></span></div>
+    <div id="rta-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="rta-go">Add to returns sheet</button>
+    </div>
+  </div>
+</div>
+
+<!-- Base names the stock item for a returned line described only in words -->
+<div class="modal-back" id="rt-item-modal">
+  <div class="modal">
+    <h3>Which stock item is it?</h3>
+    <div class="muted" id="rti-what"></div>
+    <div class="field"><input type="search" id="rti-search" placeholder="Search the stock list"></div>
+    <div class="pick-list" id="rti-list"></div>
+    <div id="rti-error"></div>
+    <div class="buttons"><button type="button" class="secondary" data-close>Cancel</button></div>
   </div>
 </div>
 
@@ -901,10 +970,12 @@ function showView(name) {
   $("view-loads").hidden = name !== "loads";
   $("view-stock").hidden = name !== "stock";
   $("view-receive").hidden = name !== "receive";
+  $("view-returns").hidden = name !== "returns";
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   if (name === "loads") refreshLoads();
   if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
   if (name === "receive") loadReceiving();
+  if (name === "returns") loadReturns();
 }
 document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.tab)));
 
@@ -1936,7 +2007,7 @@ $("ls-bar").addEventListener("click", async (ev) => {
       $("ls-card").hidden = true;
       refreshWaitingOnly();
     }
-    if (ev.target.id === "ls-print") window.print();
+    if (ev.target.id === "ls-print") { drawPrint(sheetOnScreen); window.print(); }
   } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 });
 
@@ -2164,6 +2235,7 @@ function drawExtras() {
     const what = e.stock_items ? `${esc(e.stock_items.name)}${e.stock_items.standard_size ? " · " + esc(e.stock_items.standard_size) : ""}` : esc(e.description);
     const state = e.status === "waiting" ? `<span class="chip review">Waiting for Base</span>`
       : e.status === "allocated" ? `<span class="chip matched">Put into ${esc(e.allocated?.name || "")} stock</span> <span class="muted">by ${esc(e.decider?.name || "")}</span>`
+      : e.status === "returned" ? `<span class="chip notstock">Sent back to Maun</span>`
       : `<span class="chip return">To be returned to Maun</span> <span class="muted">— ${esc(e.decider?.name || "")}</span>`;
     return `<div class="extra"><span><b>${fmtQty(e.quantity)} × ${what}</b> <span class="muted">· recorded by ${esc(e.recorder?.name || "")}${e.note ? " · " + esc(e.note) : ""} · ${state}</span>
       ${e.photo_url ? `<div><img class="thumb" src="${esc(e.photo_url)}" data-photo-url="${esc(e.photo_url)}" alt="Photo"></div>` : ""}</span>
@@ -2287,6 +2359,262 @@ $("co-go").addEventListener("click", async () => {
     closeModals();
   } catch (e) { $("correct-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 });
+
+// --- Returns ---------------------------------------------------------------------
+
+let returnsInfo = { returns_sheets: [], to_return: [], can_office: false, everywhere: false };
+let rtSheet = null, rtOnHand = [], rtPick = null, rtPhoto = null, rtExtra = null, rtDeciding = null;
+const RT_REASON = { damaged: "Damaged", wrong_item: "Wrong item", excess: "Excess", other: "Other" };
+const rtName = (l) => l.stock_items?.name || l.description || "";
+const rtSize = (l) => l.stock_items?.item_type === "variable_weight" ? "kg" : (l.stock_items?.standard_size || "");
+const rtError = (msg) => {
+  $("rt-action-error").innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : "";
+  if (msg) $("rt-action-error").scrollIntoView({ behavior: "smooth", block: "center" });
+};
+
+async function loadReturns() {
+  $("rt-error").innerHTML = "";
+  try {
+    await ensureLocations();
+    returnsInfo = await api("returns");
+    const camps = returnsInfo.everywhere || returnsInfo.can_office ? locations : locations.filter((l) => l.id === returnsInfo.home_location_id);
+    const was = $("rt-camp").value;
+    $("rt-camp").innerHTML = camps.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+    $("rt-camp").value = was && camps.some((l) => l.id === was) ? was : (camps.find((l) => l.name === DEFAULT_CAMP) || camps[0] || {}).id || "";
+    drawRtExtras();
+    drawRtList();
+  } catch (e) { $("rt-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+function drawRtExtras() {
+  const here = returnsInfo.to_return.filter((e) => e.location_id === $("rt-camp").value);
+  $("rt-extras").innerHTML = here.length ? `<div class="rc-group-label">Base said these go back</div>` + here.map((e) => `<div class="extra">
+      <span><b>${fmtQty(e.quantity)} × ${esc(e.stock_items?.name || e.description)}</b>${e.note ? ` <span class="muted">· ${esc(e.note)}</span>` : ""}</span>
+      <button type="button" class="secondary small" data-rt-extra="${e.id}">Add to returns sheet</button></div>`).join("") : "";
+}
+$("rt-camp").addEventListener("change", drawRtExtras);
+function drawRtList() {
+  const day = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const row = (s, cls, text) => `<button type="button" class="${cls}" data-rt-open="${s.id}">Returns sheet ${s.number} · ${esc(s.locations?.name || "")}<span class="rc-sub">${s.return_lines?.[0]?.count ?? 0} lines · ${text}</span></button>`;
+  const groups = [
+    ["Being put together", (s) => s.status === "draft", (s) => row(s, "secondary rc-open", "not sent yet")],
+    ["On the way to Maun", (s) => s.status === "sent", (s) => row(s, "rc-waiting", `sent ${day(s.sent_at)}`)],
+    ["At Base — still to decide", (s) => s.status === "received" && !s.completed_at, (s) => row(s, "secondary rc-open", `received ${s.received_on ? day(s.received_on + "T12:00:00") : ""}`)],
+    ["Complete", (s) => !!s.completed_at, (s) => row(s, "secondary rc-done", `✓ finished ${day(s.completed_at)}`)],
+  ];
+  $("rt-list").innerHTML = groups.map(([label, match, draw]) => {
+    const items = returnsInfo.returns_sheets.filter(match);
+    return items.length ? `<div class="rc-group-label" style="margin-top:8px">${label} (${items.length})</div>` + items.map(draw).join("") : "";
+  }).join("") || `<span class="muted">No returns sheets yet.</span>`;
+}
+$("rt-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-rt-open]");
+  if (!b) return;
+  try { drawRtSheet(await api("returns_sheet", { query: `&id=${b.dataset.rtOpen}` })); $("rt-card").scrollIntoView({ behavior: "smooth" }); }
+  catch (e) { $("rt-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+function openRtAdd(extra) {
+  rtExtra = extra; rtPick = null; rtPhoto = null;
+  $("rta-search-box").hidden = !!extra;
+  $("rta-qty-box").hidden = !!extra;
+  $("rta-what").textContent = extra ? `${fmtQty(extra.quantity)} × ${extra.stock_items?.name || extra.description}` : "Search what this camp holds.";
+  ["rta-search", "rta-qty", "rta-note"].forEach((id) => { $(id).value = ""; });
+  $("rta-reason").value = extra ? "wrong_item" : "damaged";
+  $("rta-list").innerHTML = ""; $("rta-photo").innerHTML = ""; $("rta-error").innerHTML = "";
+  openModal("rt-add-modal");
+}
+$("rt-add").addEventListener("click", async () => {
+  $("rt-error").innerHTML = "";
+  if (!$("rt-camp").value) return;
+  try { rtOnHand = (await api("stock_on_hand", { query: `&location_id=${$("rt-camp").value}` })).items; openRtAdd(null); $("rta-search").focus(); }
+  catch (e) { $("rt-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("rt-extras").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-rt-extra]");
+  if (b) openRtAdd(returnsInfo.to_return.find((e) => e.id === b.dataset.rtExtra));
+});
+$("rta-search").addEventListener("input", () => {
+  const words = $("rta-search").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hits = !words.length ? [] : rtOnHand.filter((i) => words.every((w) => `${i.name} ${i.category} ${i.standard_size || ""}`.toLowerCase().includes(w))).slice(0, 20);
+  $("rta-list").innerHTML = hits.map((i) => `<button type="button" class="secondary" data-rta-item="${i.id}" aria-pressed="${rtPick?.id === i.id}">${esc(i.name)}${i.standard_size ? ` · ${esc(i.standard_size)}` : ""} <span class="muted">· holds ${fmtQty(i.quantity)}${i.damaged_received ? ` · ${fmtQty(i.damaged_received)} damaged` : ""}</span></button>`).join("")
+    || (words.length ? `<span class="muted">This camp doesn't hold anything matching that.</span>` : "");
+});
+$("rta-list").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-rta-item]");
+  if (!b) return;
+  rtPick = rtOnHand.find((i) => i.id === b.dataset.rtaItem);
+  document.querySelectorAll("#rta-list [data-rta-item]").forEach((x) => x.setAttribute("aria-pressed", x === b));
+});
+$("rta-photo-btns").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-rta-photo]");
+  if (!b) return;
+  pickPhoto(b.dataset.rtaPhoto === "1", false, async (files) => {
+    rtPhoto = await shrink(files[0]);
+    $("rta-photo").innerHTML = `<img class="thumb" src="${rtPhoto}" data-photo-url="${rtPhoto}" alt="Photo"> <button type="button" class="secondary small" id="rta-photo-remove">Remove</button>`;
+  });
+});
+$("rta-photo").addEventListener("click", (ev) => {
+  if (ev.target.id === "rta-photo-remove") { rtPhoto = null; $("rta-photo").innerHTML = ""; }
+  const u = ev.target.closest("[data-photo-url]");
+  if (u) openViewer(u.dataset.photoUrl);
+});
+$("rta-go").addEventListener("click", async () => {
+  $("rta-error").innerHTML = "";
+  if (!rtExtra && !rtPick) { $("rta-error").innerHTML = `<div class="error">Choose the item from the list.</div>`; return; }
+  $("rta-go").disabled = true;
+  try {
+    drawRtSheet(await api("add_return_line", { body: {
+      location_id: $("rt-camp").value, stock_item_id: rtPick?.id || null, extra_id: rtExtra?.id || null,
+      quantity: numText($("rta-qty").value), reason: $("rta-reason").value, note: $("rta-note").value, photo_data_url: rtPhoto,
+    } }));
+    closeModals();
+    loadReturns();
+  } catch (e) { $("rta-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { $("rta-go").disabled = false; }
+});
+
+function drawRtSheet(data) {
+  rtSheet = data;
+  rtError("");
+  const s = data.returns_sheet;
+  const when = (t) => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const office = returnsInfo.can_office;
+  const base = session.person.base_level;
+  const stage = s.status === "draft" ? "Being put together" : s.status === "sent" ? "On the way to Maun" : s.completed_at ? "Complete" : "At Base";
+  $("rt-card").hidden = false;
+  $("rt-title").textContent = `Returns sheet ${s.number} · ${s.locations?.name || ""} · ${stage}`;
+  $("rt-meta").textContent = s.status === "draft" ? `Started by ${s.creator?.name || ""}.`
+    : `Sent by ${s.sender?.name || ""}, ${when(s.sent_at)}.` + (s.received_at ? ` Received ${s.received_on} by ${s.receiver?.name || ""}.` : "") + (s.completed_at ? ` Finished by ${s.completer?.name || ""}.` : "");
+  const OUT = { base_stock: ["matched", "Back in Base stock"], written_off: ["return", "Written off"], supplier: ["review", "Back to supplier — credit to chase"] };
+  $("rt-lines").innerHTML = data.lines.map((l) => {
+    const size = rtSize(l);
+    const value = l.unit_cost_excl != null ? Number(l.quantity_received ?? l.quantity_sent) * Number(l.unit_cost_excl) : null;
+    const short = s.status === "received" && Number(l.quantity_received) < Number(l.quantity_sent);
+    let right = "";
+    if (s.status === "draft") right = `<button type="button" class="secondary small" data-rt-remove="${l.id}">Remove</button>`;
+    if (s.status === "sent" && office) right = `<label class="muted" style="font-weight:400">Received <input type="text" inputmode="decimal" class="rc-qty" id="rtq-${l.id}" aria-label="Received"></label>`;
+    let below = "";
+    if (s.status === "received") {
+      below += `<div class="muted">Sent ${fmtQty(l.quantity_sent)} · received <b>${fmtQty(l.quantity_received)}</b>${office && value != null ? ` · value P ${money(value)} excl VAT` : ""}</div>`;
+      if (short) below += `<div class="short">${fmtQty(l.quantity_sent - l.quantity_received)} short in transit, for Base to find</div>`;
+      if (l.outcome) below += `<div style="margin-top:4px"><span class="chip ${OUT[l.outcome][0]}">${OUT[l.outcome][1]}</span> <span class="muted">${esc(l.decider?.name || "")}${l.outcome_note ? " · " + esc(l.outcome_note) : ""}</span></div>`;
+      else if (Number(l.quantity_received) > 0 && office && !s.completed_at) below += `<div class="actions">
+          <button type="button" class="secondary small" data-rt-decide="${l.id}" data-outcome="base_stock">Back into Base stock</button>
+          <button type="button" class="secondary small" data-rt-decide="${l.id}" data-outcome="supplier">Back to supplier</button>
+          ${base ? `<button type="button" class="secondary small" data-rt-decide="${l.id}" data-outcome="written_off">Write off</button>` : ""}</div>`;
+    }
+    return `<div class="extra"><span style="flex:1 1 200px"><b>${fmtQty(l.quantity_sent)} × ${esc(rtName(l))}</b>${size ? ` <span class="muted">${esc(size)}</span>` : ""}
+        <div class="muted">${RT_REASON[l.reason] || ""}${l.note ? " · " + esc(l.note) : ""}</div>
+        ${l.photo_url ? `<div><img class="thumb" src="${esc(l.photo_url)}" data-photo-url="${esc(l.photo_url)}" alt="Photo"></div>` : ""}${below}</span>
+      ${right ? `<span>${right}</span>` : ""}</div>`;
+  }).join("") || `<span class="muted">Nothing on it yet. Use + Add an item above.</span>`;
+
+  const receiving = s.status === "sent" && office;
+  $("rt-finish").hidden = !receiving;
+  if (receiving) {
+    const sentOn = new Date(new Date(s.sent_at).getTime() + 2 * 3600_000).toISOString().slice(0, 10);
+    rtSheet.sentOn = sentOn;
+    $("rt-date").min = sentOn; $("rt-date").max = isoToday();
+    $("rt-date").value = isoToday() < sentOn ? sentOn : isoToday();
+    drawRtPeriod();
+  }
+  const open = data.lines.filter((l) => Number(l.quantity_received ?? 0) > 0 && !l.outcome).length;
+  const print = `<button type="button" class="secondary" id="rt-print">Print returns sheet</button>`;
+  $("rt-bar").innerHTML =
+    s.status === "draft" ? `<button type="button" id="rt-send" ${data.lines.length ? "" : "disabled"}>Send returns sheet</button>
+       <button type="button" class="secondary" id="rt-discard">Discard</button><span class="muted">Sending takes these out of the camp's stock and locks the sheet.</span>`
+    : receiving ? `<button type="button" class="secondary" id="rt-all">Receive all</button><button type="button" id="rt-receive">Confirm received</button>${print}`
+    : s.status === "sent" ? `${print}<span class="muted">Waiting for Base to receive it.</span>`
+    : s.completed_at ? `<span class="chip matched" style="font-size:14px;padding:4px 12px">Complete ✓</span>${data.written_off_value && office ? `<span class="muted">Written off: P ${money(data.written_off_value)} excl VAT</span>` : ""}${print}`
+    : office ? `<button type="button" class="primary" id="rt-complete" ${open ? "disabled" : ""}>Finish — nothing more to change</button><span class="${open ? "reason" : "muted"}">${open ? `${open} line${open > 1 ? "s" : ""} still need${open > 1 ? "" : "s"} a decision.` : "Every line is decided."}${data.written_off_value ? ` Written off so far: P ${money(data.written_off_value)} excl VAT.` : ""}</span>${print}`
+    : `${print}<span class="muted">Base is deciding what happens to these.</span>`;
+}
+function drawRtPeriod() {
+  const rec = $("rt-date").value, sent = rtSheet?.sentOn || "";
+  const differ = rec && sent && rec.slice(0, 7) !== sent.slice(0, 7);
+  $("rt-period-box").hidden = !differ;
+  if (differ) $("rt-period").innerHTML = `<option value="${sent.slice(0, 7)}-01">${monthName(sent.slice(0, 7) + "-01")} — the month it was sent</option><option value="${rec.slice(0, 7)}-01">${monthName(rec.slice(0, 7) + "-01")} — the month it arrived</option>`;
+}
+$("rt-date").addEventListener("change", drawRtPeriod);
+$("rt-lines").addEventListener("click", async (ev) => {
+  const u = ev.target.closest("[data-photo-url]");
+  if (u) return openViewer(u.dataset.photoUrl);
+  const rm = ev.target.closest("[data-rt-remove]");
+  rtError("");
+  try {
+    if (rm) { drawRtSheet(await api("remove_return_line", { body: { line_id: rm.dataset.rtRemove } })); loadReturns(); return; }
+    const d = ev.target.closest("[data-rt-decide]");
+    if (!d) return;
+    const line = rtSheet.lines.find((l) => l.id === d.dataset.rtDecide);
+    const outcome = d.dataset.outcome;
+    if (outcome === "base_stock" && !line.stock_item_id) {
+      rtDeciding = line;
+      await ensureCatalogue();
+      $("rti-what").textContent = `${fmtQty(line.quantity_received)} × ${line.description || ""}`;
+      $("rti-search").value = ""; $("rti-list").innerHTML = ""; $("rti-error").innerHTML = "";
+      return openModal("rt-item-modal");
+    }
+    let note = "";
+    if (outcome === "written_off") {
+      const v = prompt(`Write off ${fmtQty(line.quantity_received)} × ${rtName(line)}? Say why (optional). This records a loss and can't be undone.`, line.note || "");
+      if (v == null) return;
+      note = v;
+    } else if (!confirm(outcome === "base_stock" ? `Put ${fmtQty(line.quantity_received)} × ${rtName(line)} into Base stock? This can't be undone.` : `Mark ${fmtQty(line.quantity_received)} × ${rtName(line)} as going back to the supplier? This can't be undone.`)) return;
+    drawRtSheet(await api("decide_return_line", { body: { line_id: line.id, outcome, note } }));
+  } catch (e) { rtError(e.message); }
+});
+$("rti-search").addEventListener("input", () => pickList("rti-search", "rti-list", null));
+$("rti-list").addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-pick-item]");
+  if (!b) return;
+  try {
+    drawRtSheet(await api("decide_return_line", { body: { line_id: rtDeciding.id, outcome: "base_stock", stock_item_id: b.dataset.pickItem } }));
+    closeModals();
+  } catch (e) { $("rti-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("rt-bar").addEventListener("click", async (ev) => {
+  const id = rtSheet?.returns_sheet?.id;
+  rtError("");
+  try {
+    if (ev.target.id === "rt-print") { drawRtPrint(rtSheet); window.print(); }
+    if (ev.target.id === "rt-all") rtSheet.lines.forEach((l) => { const i = $("rtq-" + l.id); if (i && !i.value.trim()) i.value = fmtQty(l.quantity_sent).replace(/,/g, ""); });
+    if (ev.target.id === "rt-send") {
+      if (!confirm("Send this returns sheet? These items leave the camp's stock, and the sheet locks.")) return;
+      drawRtSheet(await api("send_return_sheet", { body: { returns_sheet_id: id } }));
+      loadReturns();
+    }
+    if (ev.target.id === "rt-discard") {
+      if (!confirm("Discard this returns sheet? Nothing has left stock yet.")) return;
+      await api("discard_return_sheet", { body: { returns_sheet_id: id } });
+      rtSheet = null; $("rt-card").hidden = true;
+      loadReturns();
+    }
+    if (ev.target.id === "rt-receive") {
+      const lines = rtSheet.lines.map((l) => ({ id: l.id, quantity_received: numText($("rtq-" + l.id).value) }));
+      if (lines.some((l) => !/^\d+(\.\d+)?$/.test(l.quantity_received))) return rtError("Every received count must be a number, 0 or more. Receive all fills them with what was sent.");
+      if (!confirm("Confirm what arrived? You then decide what happens to each line.")) return;
+      drawRtSheet(await api("receive_return_sheet", { body: { returns_sheet_id: id, received_on: $("rt-date").value, stock_period: $("rt-period-box").hidden ? null : $("rt-period").value, lines } }));
+      loadReturns();
+    }
+    if (ev.target.id === "rt-complete") {
+      if (!confirm("Finish this returns sheet? Every line is decided, and it closes.")) return;
+      const data = await api("complete_return_sheet", { body: { returns_sheet_id: id } });
+      rtSheet = null; $("rt-card").hidden = true;
+      await loadReturns();
+      $("rt-error").innerHTML = `<div class="notice">Returns sheet ${data.returns_sheet.number} is complete.</div>`;
+      $("view-returns").scrollIntoView({ behavior: "smooth" });
+    }
+  } catch (e) { rtError(e.message); }
+});
+function drawRtPrint(data) {
+  const s = data.returns_sheet;
+  const rows = data.lines.map((l) => `<tr><td class="box">☐</td><td>${esc(rtName(l))}</td><td>${esc(rtSize(l))}</td><td>${esc(RT_REASON[l.reason] || "")}${l.note ? ": " + esc(l.note) : ""}</td><td class="num">${fmtQty(l.quantity_sent)}</td><td class="num"></td></tr>`).join("");
+  $("print-sheet").innerHTML = `
+    <h1>Bush Ways · Returns sheet ${s.number} · ${esc(s.locations?.name || "")} to Maun</h1>
+    <div>${s.sent_at ? `Sent ${new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" })}${s.sender?.name ? " by " + esc(s.sender.name) : ""}.` : "Not sent yet."} Tick each line as it arrives at Base; write what actually arrived if it differs.</div>
+    <table><thead><tr><th></th><th>Item</th><th>Size</th><th>Why</th><th class="num">Sent</th><th class="num">Received</th></tr></thead><tbody>${rows}</tbody></table>
+    <p>Sent by: ______________________ &nbsp; Checked at Base by: ______________________ &nbsp; Date: ____________</p>`;
+}
 
 // --- Stock on hand -------------------------------------------------------------
 
