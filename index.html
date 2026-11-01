@@ -135,6 +135,22 @@
   .pick-list { max-height: 50vh; overflow: auto; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
   .pick-list button { text-align: left; }
   .pick-list button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
+  .ls-invoices { margin-top: 8px; padding: 8px 10px; background: var(--offwhite); border-radius: 6px; font-size: 13px; }
+  /* On a phone each draft line is a card, so the invoices it came from show. */
+  @media (max-width: 640px) {
+    table.grid.ls { table-layout: auto; border: 0; }
+    table.grid.ls colgroup, table.grid.ls thead { display: none; }
+    table.grid.ls, table.grid.ls tbody { display: block; width: 100%; }
+    table.grid.ls tr { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; border: 1px solid var(--sand); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
+    table.grid.ls tr.group { display: block; border: 0; padding: 8px 2px 2px; background: none; }
+    table.grid.ls tr.group td { background: none; padding: 0; }
+    table.grid.ls td { border: 0; padding: 0; background: none; }
+    table.grid.ls td:nth-child(1), table.grid.ls td:nth-child(4), table.grid.ls td:nth-child(5) { grid-column: 1 / -1; }
+    table.grid.ls td:nth-child(2) { color: #7a6e64; font-size: 13px; }
+    table.grid.ls td:nth-child(3) { text-align: right; }
+    table.grid.ls td:nth-child(3)::before { content: "Qty "; font-size: 12px; font-weight: 600; color: var(--earth); }
+    table.grid.ls tr.group td:nth-child(1) { grid-column: auto; }
+  }
   .pick-inv { border: 1px solid var(--sand); border-radius: 6px; margin-top: 10px; background: #fff; }
   .pick-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; }
   .pick-head label, .pick-line label { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; margin: 0; color: var(--text); flex: 1 1 200px; font-size: 14px; }
@@ -225,7 +241,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-01c</p>
 </header>
 
 <main>
@@ -460,8 +476,9 @@
     <section class="card" id="ls-card" hidden>
       <h2 id="ls-title"></h2>
       <div class="muted" id="ls-meta"></div>
+      <div id="ls-invoices" class="ls-invoices"></div>
       <div class="table-wrap" style="margin-top:12px">
-        <table class="grid">
+        <table class="grid ls">
           <colgroup><col><col class="c-size"><col class="c-num"><col><col style="width:170px"></colgroup>
           <thead><tr><th>Item</th><th>Size</th><th class="num">Qty</th><th>From</th><th></th></tr></thead>
           <tbody id="ls-lines"></tbody>
@@ -1837,6 +1854,11 @@ function drawSheet(data) {
   $("ls-meta").textContent = (shortLines ? `${shortLines} line${shortLines > 1 ? "s" : ""} where Base received a different amount from the invoice — see "supplier short" below; those are credit notes to chase. ` : "") + (draft
     ? `Built by ${s.creator?.name || ""}, ${when(s.created_at)}. Adjust or hold back lines, then send.`
     : `Sent by ${s.sender?.name || ""}, ${when(s.sent_at)}.${data.receipt ? ` Received ${data.receipt.received_on} by ${data.receipt.receiver?.name || ""}.` : " Waiting for camp to receive it."} Locked.`);
+  // Which invoices this load sheet was built from, in plain sight.
+  const onSheet = [...new Set(data.lines.flatMap((l) => (l.load_sheet_line_sources || []).map((x) =>
+    [x.invoice_lines?.invoices?.supplier, x.invoice_lines?.invoices?.invoice_number || "no number"].filter(Boolean).join(" · "))))];
+  $("ls-invoices").innerHTML = onSheet.length
+    ? `<b>${onSheet.length === 1 ? "1 invoice" : onSheet.length + " invoices"} on this load sheet:</b><br>${onSheet.map(esc).join("<br>")}` : "";
   let group = null;
   const rows = [];
   for (const l of data.lines) {
