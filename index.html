@@ -277,7 +277,7 @@
 <header>
   <h1>Read an Invoice</h1>
   <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-01L</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-03a</p>
 </header>
 
 <main>
@@ -3324,7 +3324,7 @@ function drawTake(data) {
   $("st-title").textContent = `${t.locations?.name || ""} · ${stName(t)}`;
   const who = (x) => x?.name ? ` by ${x.name}` : "";
   $("st-state").textContent = `Stock take ${t.number}. ` + (
-    t.status === "counting" ? `Started${who(t.starter)}. Each count saves as you go; nothing changes stock until it's handed in${t.kind === "month_end" ? " and Base approves it" : ""}.`
+    t.status === "counting" ? `Started${who(t.starter)}. Each count saves as you go, so you can stop and come back to it. Nothing changes stock until it's handed in${t.kind === "month_end" ? " and Base approves it" : ""}.`
     : t.status === "submitted" && t.kind === "month_end" ? `Counted ${stDay(t.counted_on)}, handed in${who(t.submitter)}. Waiting for Base to approve it.`
     : t.status === "submitted" ? `Counted ${stDay(t.counted_on)}${who(t.submitter)}. A snapshot: it didn't change stock.`
     : `Counted ${stDay(t.counted_on)}, handed in${who(t.submitter)}, approved${who(t.approver)}. Stock now follows this count, booked to ${stMonthName(t.stock_period)}.`);
@@ -3352,7 +3352,7 @@ function drawStCompare() {
   const later = stData.booked_later || [];
   $("st-compare").innerHTML = `<div class="oh-total" style="margin-top:10px"><b>${stData.take.kind === "month_end" ? "Usage this month" : "Used since the last month-end count"}</b><b class="oh-total-figure">P ${money(c.usage_value)}</b></div>
     <div class="oh-total"><b>Value of stock on this count</b><b class="oh-total-figure">P ${money(c.closing_value)}</b></div>
-    ${c.not_counted ? `<div class="extra st-doubt" style="margin-top:8px;display:block"><b>${c.not_counted} not counted.</b> Their stock stays at what the records say, and they show no usage.</div>` : ""}
+    ${c.blank ? `<div class="extra st-doubt" style="margin-top:8px;display:block"><b>${c.blank} left blank, taken as 0.</b> Check none of them were simply missed: they're marked below.</div>` : ""}
     ${later.length ? `<div class="extra st-doubt" style="margin-top:8px;display:block"><b>Arrived before this count, booked to the next month</b><div>These were on the shelf when it was counted, but aren't in this month's records, so usage will look too low by this much. If they were counted, send the count back and take them off it.</div>${later.map((m) => `<div>${esc(m.name)}: ${fmtQty(m.quantity)} on ${esc(stDay(m.on))}</div>`).join("")}</div>` : ""}`;
 }
 function drawStLines() {
@@ -3384,6 +3384,7 @@ function drawStLines() {
       const fixes = l.stock_take_corrections || [];
       const canFix = office && take.status === "approved";
       out.push(`<div class="st-line">${name}
+        ${l.counted_source === "blank" ? `<div class="muted">left blank, taken as 0</div>` : ""}
         ${fixes.map((c) => `<div class="muted">Corrected from ${c.old_quantity == null ? "not counted" : fmtQty(Number(c.old_quantity))}: ${esc(c.reason)}</div>`).join("")}
         ${canFix ? `<button type="button" class="secondary small" data-st-fix="${l.id}">Correct</button>` : ""}</div>
         <div class="st-num"><b>${l.counted_qty == null ? "—" : fmtQty(Number(l.counted_qty))}</b></div>
@@ -3402,7 +3403,8 @@ function drawStActions() {
     $("st-actions").innerHTML = `<div class="row">
         <div><label for="st-counted-on">Day it was counted</label><input type="date" id="st-counted-on" value="${esc(isoToday())}" max="${esc(isoToday())}"></div>
       </div>
-      <p class="muted" id="st-tally">${counted} of ${lines.length} counted. An empty box means not counted; if there are none, type 0.</p>
+      <p class="muted" id="st-tally">${counted} of ${lines.length} counted. Anything left blank counts as 0 when you hand it in.</p>
+      <button type="button" class="secondary" id="st-later">Save and finish later</button>
       <button type="button" class="primary" id="st-submit">Hand in the count</button>
       <button type="button" class="secondary" id="st-discard">Discard this count</button>`;
   } else if (take.status === "submitted" && take.kind === "month_end" && office) {
@@ -3453,7 +3455,7 @@ $("st-lines").addEventListener("input", (ev) => {
   clearTimeout(stTimer);
   stTimer = setTimeout(stFlush, 2000);
   const counted = stData.lines.filter((l) => stValue(l) != null && stValue(l) !== "").length;
-  if ($("st-tally")) $("st-tally").textContent = `${counted} of ${stData.lines.length} counted. An empty box means not counted; if there are none, type 0.`;
+  if ($("st-tally")) $("st-tally").textContent = `${counted} of ${stData.lines.length} counted. Anything left blank counts as 0 when you hand it in.`;
 });
 $("st-filter").addEventListener("click", (ev) => {
   const b = ev.target.closest("[data-st-filter]");
@@ -3485,15 +3487,23 @@ $("st-card").addEventListener("click", async (ev) => {
   }
   const photo = ev.target.closest("[data-st-photo]");
   if (photo) return pickPhoto(photo.dataset.stPhoto === "1", true, stReadPhotos);
-  const act = ev.target.closest("#st-submit, #st-discard, #st-approve, #st-reopen");
+  const act = ev.target.closest("#st-later, #st-submit, #st-discard, #st-approve, #st-reopen");
   if (!act) return;
   $("st-error2").innerHTML = "";
   act.disabled = true;
   try {
-    if (act.id === "st-submit") {
+    if (act.id === "st-later") {
+      if (!(await stFlush())) throw new Error("Some counts haven't saved yet. They're kept on this phone; try again when there's signal.");
+      const t = stData.take;
+      stData = null;
+      $("st-card").hidden = true; $("st-start").hidden = false;
+      await openStockTakes();
+      $("st-error").innerHTML = `<div class="extra" style="margin-top:8px;display:block"><b>Stock take ${esc(t.number)} is saved.</b> To carry on, tap it under Recent stock takes.</div>`;
+      return;
+    } else if (act.id === "st-submit") {
       if (!(await stFlush())) throw new Error("Some counts haven't saved yet. Try again when there's signal.");
       const left = stData.lines.filter((l) => l.counted_qty == null).length;
-      if (left && !confirm(`${left} of ${stData.lines.length} items aren't counted. They'll keep what the records say. Hand in anyway?`)) return;
+      if (left && !confirm(`${left} of ${stData.lines.length} items are blank and will count as 0. Hand in anyway?`)) return;
       drawTake(await api("submit_stock_take", { body: { stock_take_id: stData.take.id, counted_on: $("st-counted-on").value } }));
     } else if (act.id === "st-discard") {
       if (!confirm("Discard this count and everything entered on it?")) return;
@@ -3573,18 +3583,18 @@ $("st-print").addEventListener("click", async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Stock take", {
       pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, printTitlesRow: "1:3",
-        margins: { left: 0.4, right: 0.4, top: 0.4, bottom: 0.5, header: 0.2, footer: 0.2 } },
+        margins: { left: 0.4, right: 0.4, top: 0.3, bottom: 0.4, header: 0.15, footer: 0.15 } },
       headerFooter: { oddFooter: `&CStock take ${take.number} · page &P of &N` },
     });
     ws.columns = [{ width: 7 }, { width: 58 }, { width: 13 }, { width: 15 }];
     const thin = { style: "thin" }, all = { top: thin, left: thin, bottom: thin, right: thin };
     ws.mergeCells("A1:D1");
     ws.getCell("A1").value = `Stock take ${take.number} · ${camp} · ${stName(take)}`;
-    ws.getCell("A1").font = { bold: true, size: 14 };
+    ws.getCell("A1").font = { bold: true, size: 12 };
     ws.mergeCells("A2:D2");
-    ws.getCell("A2").value = "Count single units: bottles, tins, packets, not cases. Write one clear figure in the box; if there are none, write 0. Counted by: ____________  Date: ________";
+    ws.getCell("A2").value = "Count single units: bottles, tins, packets, not cases. One clear figure in each box. A blank box counts as 0. Counted by: ____________  Date: ________";
     ws.getCell("A2").alignment = { wrapText: true, vertical: "top" };
-    ws.getRow(2).height = 32;
+    ws.getRow(2).height = 26;
     const head = ws.getRow(3);
     head.values = ["No.", "Item", "Size", "Count"];
     head.font = { bold: true };
@@ -3596,12 +3606,13 @@ $("st-print").addEventListener("click", async () => {
       if (g !== group) {
         const r = ws.addRow([g]);
         ws.mergeCells(`A${r.number}:D${r.number}`);
-        r.font = { bold: true };
-        r.height = 20;
+        r.font = { bold: true, size: 10 };
+        r.height = 15;
         group = g;
       }
       const r = ws.addRow([l.line_no, it.name, it.item_type === "variable_weight" ? "kg" : it.standard_size || "", ""]);
-      r.height = 26;
+      r.height = 15.5;
+      r.font = { size: 10 };
       r.alignment = { vertical: "middle" };
       r.eachCell({ includeEmpty: true }, (c) => { c.border = all; });
       r.getCell(4).border = { top: thin, bottom: thin, left: { style: "medium" }, right: { style: "medium" } };
@@ -3609,10 +3620,10 @@ $("st-print").addEventListener("click", async () => {
     const note = ws.addRow(["Anything found that isn't listed: write its name and count here"]);
     ws.mergeCells(`A${note.number}:D${note.number}`);
     note.font = { bold: true };
-    note.height = 22;
+    note.height = 16;
     for (let i = 0; i < 6; i++) {
       const r = ws.addRow(["", "", "", ""]);
-      r.height = 26;
+      r.height = 15.5;
       r.eachCell({ includeEmpty: true }, (c) => { c.border = all; });
     }
     const blob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
