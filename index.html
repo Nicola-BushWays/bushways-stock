@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Read an Invoice</title>
+<title>Stock</title>
 <!--
   camp-stock: photograph an invoice, read it, match every line to the
   stock list, then a person decides each line and accepts the invoice.
@@ -14,6 +14,11 @@
 
   Local-first (root D-006): open this file straight from disk in a
   browser. Sign-in uses the same person and PIN as maintenance (D-011).
+
+  Inside the App (root D-033) it is published as stock.html beside the
+  App's pages. There the App's sign-in is used (its pass, x-bw-session, from
+  sessionStorage bw_signin), not this page's own, and only someone granted
+  Stock in tool_access gets in. Opened anywhere else it signs in as before.
 
   Nothing on this page changes stock. Accepting an invoice is what a
   load sheet will be built from; stock moves only when a delivery is
@@ -275,9 +280,9 @@
 </head>
 <body>
 <header>
-  <h1>Read an Invoice</h1>
-  <p>camp-stock · photograph each page, read it, decide every line, accept the invoice · nothing here changes stock</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-03a</p>
+  <h1>Stock</h1>
+  <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-04a</p>
 </header>
 
 <main>
@@ -302,6 +307,13 @@
     <div id="si-error"></div>
   </section>
 
+  <!-- Inside the App, signed in but not given Stock (root D-033). -->
+  <section class="card" id="no-access-card" hidden>
+    <h2>No access to Stock</h2>
+    <p>You are signed in to the App, but Stock has not been opened to you. Ask an administrator.</p>
+    <button type="button" class="secondary" id="no-access-back">← Back to tools</button>
+  </section>
+
   <section class="card" id="signed-in-card" hidden>
     <div class="signed-in">
       <span class="views">
@@ -315,6 +327,7 @@
         <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
       </span>
       <span>Signed in as <span class="who" id="who"></span> <span class="muted" id="who-extra"></span>
+        <button type="button" class="secondary small" id="to-tools" hidden>← Tools</button>
         <button type="button" class="secondary small" id="sign-out">Sign out</button></span>
     </div>
   </section>
@@ -386,7 +399,7 @@
     <section class="card">
       <h2>Deliveries to receive</h2>
       <div id="rc-notice"></div>
-      <p class="muted">Load sheets sent to your camp. Open one as the truck is unloaded (or the next morning), tap <b>Receive all</b>, then correct only what's different. Confirming puts what actually arrived into the camp's stock.</p>
+      <p class="muted">Load sheets sent to your camp. Open one as the truck is unloaded (or the next morning) and enter what actually arrived on every line. Confirming puts it into the camp's stock.</p>
       <div class="recent-list" id="rc-list"><span class="muted">Loading…</span></div>
       <div id="rc-error"></div>
     </section>
@@ -539,13 +552,21 @@
    <div id="view-take" hidden>
     <section class="card" id="st-start">
       <h2>Stock take</h2>
-      <p class="muted">Count on your phone, or print the sheet, write on it and photograph it. You can do some of each. Base approves a month-end count, and only then does stock change. A mid-month count is a snapshot: it never changes stock.</p>
+      <p class="muted">Count on your phone, or print the sheet, write on it and photograph it. You can do some of each. Base approves a month-end count, and only then does stock change. A mid-month count is a snapshot: it never changes stock, and it can be a spot check of just some sections.</p>
       <div class="row">
         <div><label for="st-camp">Camp</label><select id="st-camp"></select></div>
         <div><label for="st-kind">Kind of count</label><select id="st-kind"><option value="month_end">Month-end</option><option value="mid_month">Mid-month snapshot</option></select></div>
         <div id="st-month-box"><label for="st-month">Counts as the end of</label><select id="st-month"></select></div>
-        <div><button type="button" class="primary" id="st-begin">Start the count</button></div>
       </div>
+      <div id="st-scope-box" hidden style="margin-top:10px">
+        <label>What to count</label>
+        <div class="filters">
+          <label style="font-weight:400"><input type="radio" name="st-scope" value="all" checked> Everything</label>
+          <label style="font-weight:400"><input type="radio" name="st-scope" value="some"> A spot check of some sections</label>
+        </div>
+        <div id="st-sections" hidden style="margin-top:6px"></div>
+      </div>
+      <button type="button" class="primary" id="st-begin" style="margin-top:12px">Start the count</button>
       <div id="st-error"></div>
       <h3 style="margin-top:14px">Recent stock takes</h3>
       <div class="recent-list" id="st-list"></div>
@@ -555,6 +576,11 @@
       <h2 id="st-title" style="margin-top:10px"></h2>
       <div id="st-state" class="muted"></div>
       <div id="st-top-error"></div>
+      <div id="st-section-box" style="margin-top:12px">
+        <label for="st-section">Section</label>
+        <select id="st-section"></select>
+        <div class="muted">Share the count out: choose a section to count it, or print just that part. Everything is handed in together.</div>
+      </div>
       <div id="st-tools" style="margin-top:10px">
         <div class="filters">
           <button type="button" class="secondary" id="st-print">Download the sheet to print (Excel)</button>
@@ -1039,6 +1065,10 @@
 <script>
 const API = "https://uqfgkgmvnqiigtoymqbe.supabase.co/functions/v1/camp-stock";
 const DEFAULT_CAMP = "Khwai Guest House"; // the first test's camp (tools/camp-stock/docs/requirements.md)
+// Receive all is offered only where these receive: Bush Ways Base, Bush Ways
+// Safaris and Chobe Elephant Camp, which takes its own deliveries direct from
+// suppliers. Every other camp counts each line (Nicola, 2026-11-04, D-026).
+const RECEIVE_ALL_AT = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-3947-4f06-a42c-5291d3cb6597", "db83c66c-f559-4a47-ae4d-b70e912d5e4b"]);
 const MAX_SIDE = 2400; // the reader downsamples to a fixed budget anyway; this keeps the upload small for Maun bandwidth
 const SESSION_KEY = "camp_stock_session";
 
@@ -1059,9 +1089,16 @@ const locked = () => current?.invoice?.status === "accepted";
 
 // --- Talking to the server ------------------------------------------------
 
+// Inside the App (root D-033): the App's pass from its own sign-in. Only
+// found on the App's own site, as sessionStorage belongs to one site.
+function appPass() {
+  try { return JSON.parse(sessionStorage.getItem("bw_signin") || "null")?.token || null; } catch { return null; }
+}
+
 async function api(action, { body, query = "" } = {}) {
   const headers = {};
-  if (session) headers["x-stock-session"] = session.token;
+  if (session?.token) headers["x-stock-session"] = session.token;
+  else if (appPass()) headers["x-bw-session"] = appPass();
   if (body) headers["content-type"] = "application/json";
   const resp = await fetch(`${API}?action=${action}${query}`, body ? { method: "POST", headers, body: JSON.stringify(body) } : { headers });
   let data;
@@ -1127,7 +1164,19 @@ async function signIn() {
 }
 function showSignInError(e) { $("si-error").innerHTML = `<div class="error">${esc(e.message || e)}</div>`; }
 
+// Back to the App's tool menu, which sends a signed-in person straight there.
+const toTools = () => { location.href = "./"; };
+$("to-tools").addEventListener("click", toTools);
+$("no-access-back").addEventListener("click", toTools);
+
 function signOut() {
+  // Inside the App, signing out of Stock signs out of the App, as on every
+  // App page.
+  if (session?.app) {
+    try { sessionStorage.removeItem("bw_signin"); localStorage.removeItem("bw_keep"); } catch {}
+    location.href = "./";
+    return;
+  }
   session = null;
   try { sessionStorage.removeItem(SESSION_KEY); } catch {}
   current = null;
@@ -1140,6 +1189,7 @@ $("sign-out").addEventListener("click", signOut);
 function startApp() {
   $("signin-card").hidden = true;
   $("signed-in-card").hidden = false;
+  $("to-tools").hidden = !session.app;
   $("app").hidden = false;
   $("who").textContent = session.person.name;
   $("who-extra").textContent = session.person.can_create_item ? "· can create stock items" : "";
@@ -2297,7 +2347,7 @@ function openReceive(data) {
   $("rc-meta").textContent = done
     ? `Received ${data.receipt?.received_on || ""} by ${data.receipt?.receiver?.name || ""}, booked to ${data.receipt?.stock_period ? monthName(data.receipt.stock_period) : ""} stock.${data.receipt?.note ? " Note: " + data.receipt.note : ""} Got a count wrong? Tap Correct on that line.`
     : `Sent ${new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} by ${s.sender?.name || ""}.`;
-  $("rc-tools").hidden = done;
+  $("rc-tools").hidden = done || !RECEIVE_ALL_AT.has(s.location_id);
   $("rc-finish").hidden = done;
   const completed = !!data.receipt?.completed_at;
   $("rc-done-bar").hidden = !done;
@@ -2965,7 +3015,7 @@ function drawTfSheet(data) {
   const print = `<button type="button" class="secondary" id="tf-print">Print transfer note</button>`;
   $("tf-bar").innerHTML =
     t.status === "draft" ? `<button type="button" id="tf-send" ${data.lines.length ? "" : "disabled"}>Send transfer</button><button type="button" class="secondary" id="tf-discard">Discard</button><span class="muted">Sending takes these out of the sending camp's stock and locks the transfer.</span>`
-    : receiving ? `<button type="button" class="secondary" id="tf-all">Receive all</button><button type="button" id="tf-receive">Confirm received</button>${print}`
+    : receiving ? `${RECEIVE_ALL_AT.has(t.to_location_id) ? `<button type="button" class="secondary" id="tf-all">Receive all</button>` : ""}<button type="button" id="tf-receive">Confirm received</button>${print}`
     : t.status === "sent" ? `${print}<span class="muted">Waiting for ${esc(t.dest?.name || "the other camp")} to receive it.</span>`
     : t.completed_at ? `<span class="chip matched" style="font-size:14px;padding:4px 12px">Complete ✓</span>${print}`
     : tfAt(t.to_location_id) ? `<button type="button" class="primary" id="tf-complete">Finish — nothing more to change</button><span class="muted">After this only Base can change it.</span>${print}`
@@ -3040,7 +3090,7 @@ $("tf-bar").addEventListener("click", async (ev) => {
         const hurt = $("tfd-" + l.id).checked;
         return { id: l.id, quantity_received: numText($("tfq-" + l.id).value), damaged: hurt, damaged_quantity: hurt ? numText($("tfdq-" + l.id).value) : null, damage_note: hurt ? $("tfn-" + l.id).value : null, damage_photo_data_url: hurt ? tfPhotos.get(l.id) || null : null };
       });
-      if (lines.some((l) => !/^\d+(\.\d+)?$/.test(l.quantity_received))) return tfProblem("Every received count must be a number, 0 or more. Receive all fills them with what was sent.");
+      if (lines.some((l) => !/^\d+(\.\d+)?$/.test(l.quantity_received))) return tfProblem("Every received count must be a number, 0 or more.");
       if (lines.some((l) => l.damaged && (!(Number(l.damaged_quantity) > 0) || !String(l.damage_note || "").trim()))) return tfProblem("For each damaged line, say how many are damaged and describe the damage.");
       if (!confirm("Confirm what arrived? It goes into this camp's stock.")) return;
       drawTfSheet(await api("receive_transfer", { body: { transfer_id: id, received_on: $("tf-date").value, stock_period: $("tf-period-box").hidden ? null : $("tf-period").value, lines } }));
@@ -3255,7 +3305,7 @@ $("ss-lines").addEventListener("click", (ev) => {
 
 // --- Stock take ------------------------------------------------------------------
 
-let stData = null, stList = null, stFilter = "all";
+let stData = null, stList = null, stFilter = "all", stSection = "", stSectionFor = null;
 const stPending = new Map(); // line id -> what's still to reach the server
 let stTimer = null, stSaving = false;
 const stDraftKey = (id) => `camp_stock_take_${id}`;
@@ -3267,7 +3317,9 @@ const stLoadDraft = (id) => {
 };
 const stMonthName = (d) => new Date(String(d).slice(0, 10) + "T12:00:00").toLocaleDateString("en-GB", { month: "long", year: "numeric" });
 const stDay = (d) => d ? new Date(String(d).slice(0, 10) + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
-const stName = (t) => `${t.kind === "month_end" ? "Month-end" : "Mid-month"} · ${stMonthName(t.stock_period)}`;
+const stName = (t) => `${t.kind === "month_end" ? "Month-end" : t.sections?.length ? `Spot check (${t.sections.join(", ")})` : "Mid-month"} · ${stMonthName(t.stock_period)}`;
+// A line is in a section when the section is its sheet, or its sheet and category.
+const stInSection = (l, sec) => !sec || l.stock_items.sheet === sec || `${l.stock_items.sheet} · ${l.stock_items.category}` === sec;
 const ST_STATE = { counting: "being counted", submitted: "waiting for Base", approved: "approved" };
 
 async function openStockTakes() {
@@ -3290,12 +3342,58 @@ async function openStockTakes() {
       || `<span class="muted">No stock takes yet.</span>`;
   } catch (e) { $("st-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 }
-$("st-kind").addEventListener("change", () => { $("st-month-box").hidden = $("st-kind").value !== "month_end"; });
+// A spot check is mid-month only: a month-end count must be whole, since
+// anything left off it would count as 0 (D-027).
+function stScope() {
+  const mid = $("st-kind").value === "mid_month";
+  $("st-month-box").hidden = mid;
+  $("st-scope-box").hidden = !mid;
+  const some = mid && document.querySelector('input[name="st-scope"]:checked').value === "some";
+  $("st-sections").hidden = !some;
+  if (some) stLoadSections();
+}
+async function stLoadSections() {
+  const camp = $("st-camp").value;
+  if ($("st-sections").dataset.camp === camp) return;
+  $("st-sections").dataset.camp = camp;
+  $("st-sections").innerHTML = `<span class="muted">Loading…</span>`;
+  try {
+    const { sheets } = await api("stock_take_sections", { query: `&location_id=${camp}` });
+    $("st-sections").innerHTML = sheets.map((sh) => `<div style="margin-top:6px">
+        <label><input type="checkbox" data-st-sheet="${esc(sh.sheet)}"> ${esc(sh.sheet)} <span class="muted">(${sh.items})</span></label>
+        <div class="filters" style="margin-left:24px">${sh.categories.map((c) => `<label style="font-weight:400"><input type="checkbox" data-st-cat="${esc(sh.sheet)}" value="${esc(sh.sheet)} · ${esc(c.category)}"> ${esc(c.category)} <span class="muted">(${c.items})</span></label>`).join("")}</div></div>`).join("")
+      || `<span class="muted">This camp has nothing to count yet.</span>`;
+  } catch (e) { $("st-sections").dataset.camp = ""; $("st-sections").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+// Ticking a sheet ticks its categories; untick one and the sheet unticks.
+$("st-sections").addEventListener("change", (ev) => {
+  $("st-error").innerHTML = "";
+  const sh = ev.target.dataset.stSheet, cat = ev.target.dataset.stCat;
+  if (sh) document.querySelectorAll(`#st-sections [data-st-cat="${CSS.escape(sh)}"]`).forEach((c) => { c.checked = ev.target.checked; });
+  if (cat) {
+    const all = [...document.querySelectorAll(`#st-sections [data-st-cat="${CSS.escape(cat)}"]`)];
+    document.querySelector(`#st-sections [data-st-sheet="${CSS.escape(cat)}"]`).checked = all.every((c) => c.checked);
+  }
+});
+function stChosenSections() {
+  const out = [];
+  document.querySelectorAll("#st-sections [data-st-sheet]").forEach((sh) => {
+    if (sh.checked) out.push(sh.dataset.stSheet);
+    else document.querySelectorAll(`#st-sections [data-st-cat="${CSS.escape(sh.dataset.stSheet)}"]:checked`).forEach((c) => out.push(c.value));
+  });
+  return out;
+}
+$("st-kind").addEventListener("change", stScope);
+$("st-camp").addEventListener("change", stScope);
+document.querySelectorAll('input[name="st-scope"]').forEach((r) => r.addEventListener("change", stScope));
 $("st-begin").addEventListener("click", async () => {
   $("st-error").innerHTML = "";
   $("st-begin").disabled = true;
   try {
-    drawTake(await api("start_stock_take", { body: { location_id: $("st-camp").value, kind: $("st-kind").value, month: $("st-month").value } }));
+    const spot = $("st-kind").value === "mid_month" && document.querySelector('input[name="st-scope"]:checked').value === "some";
+    const sections = spot ? stChosenSections() : null;
+    if (spot && !sections.length) throw new Error("Tick at least one section to count, or choose Everything.");
+    drawTake(await api("start_stock_take", { body: { location_id: $("st-camp").value, kind: $("st-kind").value, month: $("st-month").value, sections } }));
   } catch (e) { $("st-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
   $("st-begin").disabled = false;
 });
@@ -3317,6 +3415,7 @@ function drawTake(data) {
   const t = data.take;
   stPending.clear();
   stFilter = "all";
+  if (stData?.take.id !== stSectionFor) { stSection = ""; stSectionFor = stData.take.id; }
   // Counts kept on this phone when the signal dropped go up with the next save.
   if (t.status === "counting") for (const [k, v] of stLoadDraft(t.id)) stPending.set(k, v);
   if (stPending.size) stTimer = setTimeout(stFlush, 500);
@@ -3332,12 +3431,30 @@ function drawTake(data) {
   const counting = t.status === "counting" && data.can_count;
   $("st-tools").hidden = !counting;
   $("st-add-box").hidden = !counting;
+  drawStSections();
   drawStPhotos();
   drawStCompare();
   drawStLines();
   drawStActions();
   window.scrollTo(0, 0);
 }
+// Every sheet on the count, and each category under it, for sharing it out.
+function drawStSections() {
+  const opts = [];
+  for (const l of stData.lines) {
+    const it = l.stock_items, cat = `${it.sheet} · ${it.category}`;
+    if (!opts.includes(it.sheet)) opts.push(it.sheet);
+    if (!opts.includes(cat)) opts.push(cat);
+  }
+  if (!opts.includes(stSection)) stSection = "";
+  const n = (sec) => stData.lines.filter((l) => stInSection(l, sec)).length;
+  $("st-section").innerHTML = `<option value="">Everything on this count (${stData.lines.length})</option>`
+    + opts.map((o) => `<option value="${esc(o)}" ${o === stSection ? "selected" : ""}>${o.includes(" · ") ? "\u00a0\u00a0\u00a0" : ""}${esc(o)} (${n(o)})</option>`).join("");
+  $("st-print").textContent = stPrintLabel();
+  $("st-section-box").hidden = opts.filter((o) => !o.includes(" · ")).length < 2 && opts.length < 3;
+}
+const stPrintLabel = () => stSection ? `Download ${stSection.split(" · ").pop()} to print (Excel)` : "Download the sheet to print (Excel)";
+$("st-section").addEventListener("change", () => { stSection = $("st-section").value; $("st-print").textContent = stPrintLabel(); drawStLines(); });
 function stValue(l) { return stPending.has(l.id) && "counted_qty" in stPending.get(l.id) ? stPending.get(l.id).counted_qty : l.counted_qty; }
 function stDoubt(l) { return stPending.has(l.id) ? null : l.read_doubt; }
 function drawStPhotos() {
@@ -3356,7 +3473,8 @@ function drawStCompare() {
     ${later.length ? `<div class="extra st-doubt" style="margin-top:8px;display:block"><b>Arrived before this count, booked to the next month</b><div>These were on the shelf when it was counted, but aren't in this month's records, so usage will look too low by this much. If they were counted, send the count back and take them off it.</div>${later.map((m) => `<div>${esc(m.name)}: ${fmtQty(m.quantity)} on ${esc(stDay(m.on))}</div>`).join("")}</div>` : ""}`;
 }
 function drawStLines() {
-  const { take, lines, comparison, office } = stData;
+  const { take, comparison, office } = stData;
+  const lines = stData.lines.filter((l) => stInSection(l, stSection));
   const counting = take.status === "counting" && stData.can_count;
   const isOut = (l) => stValue(l) == null || stValue(l) === "";
   const toCheck = lines.filter(stDoubt);
@@ -3578,7 +3696,9 @@ $("st-print").addEventListener("click", async () => {
   $("st-top-error").innerHTML = "";
   try {
     await loadExcelJs();
-    const { take, lines } = stData;
+    const { take } = stData;
+    const lines = stData.lines.filter((l) => stInSection(l, stSection));
+    const part = stSection ? ` · ${stSection}` : "";
     const camp = take.locations?.name || "";
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Stock take", {
@@ -3589,7 +3709,7 @@ $("st-print").addEventListener("click", async () => {
     ws.columns = [{ width: 7 }, { width: 58 }, { width: 13 }, { width: 15 }];
     const thin = { style: "thin" }, all = { top: thin, left: thin, bottom: thin, right: thin };
     ws.mergeCells("A1:D1");
-    ws.getCell("A1").value = `Stock take ${take.number} · ${camp} · ${stName(take)}`;
+    ws.getCell("A1").value = `Stock take ${take.number} · ${camp} · ${stName(take)}${part}`;
     ws.getCell("A1").font = { bold: true, size: 12 };
     ws.mergeCells("A2:D2");
     ws.getCell("A2").value = "Count single units: bottles, tins, packets, not cases. One clear figure in each box. A blank box counts as 0. Counted by: ____________  Date: ________";
@@ -3629,11 +3749,11 @@ $("st-print").addEventListener("click", async () => {
     const blob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${camp} stock take ${take.number}.xlsx`;
+    a.download = `${camp} stock take ${take.number}${stSection ? " " + stSection.replace(" · ", " - ") : ""}.xlsx`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   } catch (e) { $("st-top-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
-  finally { btn.disabled = false; btn.textContent = "Download the sheet to print (Excel)"; }
+  finally { btn.disabled = false; btn.textContent = stPrintLabel(); }
 });
 
 // --- Stock on hand -------------------------------------------------------------
@@ -3734,6 +3854,12 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeV
 // --- Start ------------------------------------------------------------------
 
 (async () => {
+  if (appPass()) {
+    // Inside the App: no second PIN. The server says whether this person has Stock.
+    try { session = { token: null, app: true, person: (await api("me")).me }; startApp(); }
+    catch { session = null; $("signin-card").hidden = true; $("no-access-card").hidden = false; }
+    return;
+  }
   try { await loadLocations(); } catch { showSignInError(new Error(NO_CAMPS + " Reload the page to try again.")); }
   session = loadSession();
   if (session) {
