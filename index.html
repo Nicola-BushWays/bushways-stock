@@ -289,7 +289,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-08a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-08b</p>
 </header>
 
 <main>
@@ -620,9 +620,9 @@
       <div id="st-state" class="muted"></div>
       <div id="st-top-error"></div>
       <div id="st-section-box" style="margin-top:12px">
-        <label for="st-section">Section</label>
-        <select id="st-section"></select>
-        <div class="muted">Share the count out: choose a section to count it, or print just that part. Everything is handed in together.</div>
+        <label>Sections</label>
+        <div id="st-section"></div>
+        <div class="muted">Share the count out: tick one or more sections to count them, or print just those. Tick nothing to see everything. It is all handed in together.</div>
       </div>
       <div id="st-tools" style="margin-top:10px">
         <div class="filters">
@@ -3641,7 +3641,7 @@ $("ss-lines").addEventListener("click", (ev) => {
 
 // --- Stock take ------------------------------------------------------------------
 
-let stData = null, stList = null, stFilter = "all", stSection = "", stSectionFor = null;
+let stData = null, stList = null, stFilter = "all", stSection = [], stSectionFor = null;
 const stPending = new Map(); // line id -> what's still to reach the server
 let stTimer = null, stSaving = false;
 const stDraftKey = (id) => `camp_stock_take_${id}`;
@@ -3655,7 +3655,8 @@ const stMonthName = (d) => new Date(String(d).slice(0, 10) + "T12:00:00").toLoca
 const stDay = (d) => d ? new Date(String(d).slice(0, 10) + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
 const stName = (t) => `${t.kind === "month_end" ? "Month-end" : t.sections?.length ? `Spot check (${t.sections.join(", ")})` : "Mid-month"} · ${stMonthName(t.stock_period)}`;
 // A line is in a section when the section is its sheet, or its sheet and category.
-const stInSection = (l, sec) => !sec || l.stock_items.sheet === sec || `${l.stock_items.sheet} · ${l.stock_items.category}` === sec;
+// secs is a list of "Sheet" or "Sheet · Category"; an empty list is everything.
+const stInSection = (l, secs) => !secs.length || secs.some((sec) => l.stock_items.sheet === sec || `${l.stock_items.sheet} · ${l.stock_items.category}` === sec);
 const ST_STATE = { counting: "being counted", submitted: "waiting for Base", approved: "approved" };
 
 async function openStockTakes() {
@@ -3751,7 +3752,7 @@ function drawTake(data) {
   const t = data.take;
   stPending.clear();
   stFilter = "all";
-  if (stData?.take.id !== stSectionFor) { stSection = ""; stSectionFor = stData.take.id; }
+  if (stData?.take.id !== stSectionFor) { stSection = []; stSectionFor = stData.take.id; }
   // Counts kept on this phone when the signal dropped go up with the next save.
   if (t.status === "counting") for (const [k, v] of stLoadDraft(t.id)) stPending.set(k, v);
   if (stPending.size) stTimer = setTimeout(stFlush, 500);
@@ -3774,23 +3775,44 @@ function drawTake(data) {
   drawStActions();
   window.scrollTo(0, 0);
 }
-// Every sheet on the count, and each category under it, for sharing it out.
+// Every sheet on the count, and each category under it, as tick boxes for
+// sharing it out (Nicola, 2026-11-08: more than one section at a time).
+// Ticking a sheet ticks its categories, as on the spot-check picker.
 function drawStSections() {
-  const opts = [];
+  const sheets = new Map();
   for (const l of stData.lines) {
-    const it = l.stock_items, cat = `${it.sheet} · ${it.category}`;
-    if (!opts.includes(it.sheet)) opts.push(it.sheet);
-    if (!opts.includes(cat)) opts.push(cat);
+    const it = l.stock_items;
+    if (!sheets.has(it.sheet)) sheets.set(it.sheet, []);
+    if (!sheets.get(it.sheet).includes(it.category)) sheets.get(it.sheet).push(it.category);
   }
-  if (!opts.includes(stSection)) stSection = "";
-  const n = (sec) => stData.lines.filter((l) => stInSection(l, sec)).length;
-  $("st-section").innerHTML = `<option value="">Everything on this count (${stData.lines.length})</option>`
-    + opts.map((o) => `<option value="${esc(o)}" ${o === stSection ? "selected" : ""}>${o.includes(" · ") ? "\u00a0\u00a0\u00a0" : ""}${esc(o)} (${n(o)})</option>`).join("");
+  const all = [...sheets].flatMap(([sh, cats]) => [sh, ...cats.map((c) => `${sh} · ${c}`)]);
+  stSection = stSection.filter((sec) => all.includes(sec));
+  const n = (sec) => stData.lines.filter((l) => stInSection(l, [sec])).length;
+  const on = (sec) => stSection.includes(sec) || stSection.includes(sec.split(" · ")[0]);
+  $("st-section").innerHTML = [...sheets].map(([sh, cats]) => `<div style="margin-top:6px">
+      <label><input type="checkbox" data-sts-sheet="${esc(sh)}"${on(sh) ? " checked" : ""}> ${esc(sh)} <span class="muted">(${n(sh)})</span></label>
+      <div class="filters" style="margin-left:24px">${cats.map((c) => `<label style="font-weight:400"><input type="checkbox" data-sts-cat="${esc(sh)}" value="${esc(sh)} · ${esc(c)}"${on(`${sh} · ${c}`) ? " checked" : ""}> ${esc(c)} <span class="muted">(${n(`${sh} · ${c}`)})</span></label>`).join("")}</div></div>`).join("");
   $("st-print").textContent = stPrintLabel();
-  $("st-section-box").hidden = opts.filter((o) => !o.includes(" · ")).length < 2 && opts.length < 3;
+  $("st-section-box").hidden = sheets.size < 2 && all.length < 3;
 }
-const stPrintLabel = () => stSection ? `Download ${stSection.split(" · ").pop()} to print (Excel)` : "Download the sheet to print (Excel)";
-$("st-section").addEventListener("change", () => { stSection = $("st-section").value; $("st-print").textContent = stPrintLabel(); drawStLines(); });
+const stPrintLabel = () => !stSection.length ? "Download the sheet to print (Excel)"
+  : stSection.length === 1 ? `Download ${stSection[0].split(" · ").pop()} to print (Excel)` : `Download the ${stSection.length} sections to print (Excel)`;
+$("st-section").addEventListener("change", (ev) => {
+  const sh = ev.target.dataset.stsSheet, cat = ev.target.dataset.stsCat;
+  if (sh) document.querySelectorAll(`#st-section [data-sts-cat="${CSS.escape(sh)}"]`).forEach((c) => { c.checked = ev.target.checked; });
+  if (cat) {
+    const cats = [...document.querySelectorAll(`#st-section [data-sts-cat="${CSS.escape(cat)}"]`)];
+    document.querySelector(`#st-section [data-sts-sheet="${CSS.escape(cat)}"]`).checked = cats.every((c) => c.checked);
+  }
+  // A whole sheet is kept as the sheet; otherwise its ticked categories.
+  stSection = [];
+  document.querySelectorAll("#st-section [data-sts-sheet]").forEach((s) => {
+    if (s.checked) stSection.push(s.dataset.stsSheet);
+    else document.querySelectorAll(`#st-section [data-sts-cat="${CSS.escape(s.dataset.stsSheet)}"]:checked`).forEach((c) => stSection.push(c.value));
+  });
+  $("st-print").textContent = stPrintLabel();
+  drawStLines();
+});
 function stValue(l) { return stPending.has(l.id) && "counted_qty" in stPending.get(l.id) ? stPending.get(l.id).counted_qty : l.counted_qty; }
 function stDoubt(l) { return stPending.has(l.id) ? null : l.read_doubt; }
 function drawStPhotos() {
@@ -4034,7 +4056,7 @@ $("st-print").addEventListener("click", async () => {
     await loadExcelJs();
     const { take } = stData;
     const lines = stData.lines.filter((l) => stInSection(l, stSection));
-    const part = stSection ? ` · ${stSection}` : "";
+    const part = stSection.length ? ` · ${stSection.join(", ")}` : "";
     const camp = take.locations?.name || "";
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet("Stock take", {
@@ -4085,7 +4107,7 @@ $("st-print").addEventListener("click", async () => {
     const blob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${camp} stock take ${take.number}${stSection ? " " + stSection.replace(" · ", " - ") : ""}.xlsx`;
+    a.download = `${camp} stock take ${take.number}${stSection.length ? " " + stSection.map((sec) => sec.replace(" · ", " - ")).join(", ") : ""}.xlsx`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   } catch (e) { $("st-top-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
