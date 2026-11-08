@@ -289,7 +289,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-08b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-08c</p>
 </header>
 
 <main>
@@ -1111,6 +1111,8 @@ const DEFAULT_CAMP = "Khwai Guest House"; // the first test's camp (tools/camp-s
 // Receive all is offered only where these receive: Bush Ways Base, Bush Ways
 // Safaris and Chobe Elephant Camp, which takes its own deliveries direct from
 // suppliers. Every other camp counts each line (Nicola, 2026-11-04, D-026).
+// Bush Ways Base and Bush Ways Safaris: the only places a Base-only item goes (D-029).
+const BASE_SIDE = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-3947-4f06-a42c-5291d3cb6597"]);
 const RECEIVE_ALL_AT = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-3947-4f06-a42c-5291d3cb6597", "db83c66c-f559-4a47-ae4d-b70e912d5e4b"]);
 const MAX_SIDE = 2400; // the reader downsamples to a fixed budget anyway; this keeps the upload small for Maun bandwidth
 const SESSION_KEY = "camp_stock_session";
@@ -1952,7 +1954,10 @@ async function openChoose(line) {
 function drawChoose() {
   const q = $("choose-search").value.trim().toLowerCase();
   const words = q.split(/\s+/).filter(Boolean);
+  // A camp's invoice can't take an item only Base holds (D-029).
+  const baseSide = BASE_SIDE.has(current?.invoice?.location_id);
   const hits = catalogue.filter((i) => {
+    if (i.base_only && !baseSide) return false;
     const hay = `${i.name} ${i.category} ${i.sheet} ${i.standard_size || ""}`.toLowerCase();
     return words.every((w) => hay.includes(w));
   }).slice(0, 60);
@@ -2125,7 +2130,7 @@ async function drawStockList() {
   }).slice(0, 50);
   const can = session.person.can_create_item;
   $("stock-list").innerHTML = hits.map((i) => `<div class="creator">
-      <span><b>${esc(i.name)}</b>${i.standard_size ? ` · ${esc(i.standard_size)}` : ""} <span class="muted">· ${esc(i.sheet)} / ${esc(i.category)}${i.item_type === "variable_weight" ? " · variable weight" : ""}</span></span>
+      <span><b>${esc(i.name)}</b>${i.standard_size ? ` · ${esc(i.standard_size)}` : ""} <span class="muted">· ${esc(i.sheet)} / ${esc(i.category)}${i.item_type === "variable_weight" ? " · variable weight" : ""}${i.base_only ? " · Base only" : ""}</span></span>
       <span class="actions" style="margin:0">
         ${can ? `<button type="button" class="secondary small" data-rename="${i.id}">Edit</button>
           <button type="button" class="secondary small" data-merge="${i.id}">Merge</button>
