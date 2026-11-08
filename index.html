@@ -298,7 +298,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-08d</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-08e</p>
 </header>
 
 <main>
@@ -506,7 +506,9 @@
     <section class="card" id="sf-list-card">
       <h2>Safaris</h2>
       <p class="muted">Trips on the safari board with guests, from a month back to two months ahead. Upload a trip's shopping list and its R1, R2 and R3 become issue sheets from Base stock.</p>
-      <div class="recent-list" id="sf-list"><span class="muted">Loading…</span></div>
+      <div class="actions"><button type="button" class="secondary" id="sf-short-open">Shortage list for the town driver</button></div>
+      <div id="sf-short" hidden style="margin-top:10px"></div>
+      <div class="recent-list" id="sf-list" style="margin-top:12px"><span class="muted">Loading…</span></div>
       <div id="sf-error"></div>
     </section>
     <section class="card" id="sf-card" hidden>
@@ -518,6 +520,10 @@
         <input type="file" id="sf-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       </div>
       <div class="muted" id="sf-lists" style="margin-top:6px"></div>
+      <div class="row" id="sf-topup-box" style="margin-top:10px" hidden>
+        <div><label for="sf-topup-date">Top-up for</label><input type="date" id="sf-topup-date"></div>
+        <div><button type="button" class="secondary" id="sf-topup">+ Add a top-up</button></div>
+      </div>
       <div id="sf-status"></div>
       <div id="sf-issues" style="margin-top:12px"></div>
     </section>
@@ -1285,7 +1291,7 @@ function startApp() {
 // in the browser, from the Excel template: the R1, R2 and R3 columns, their
 // dates beneath, and each line's words. The server matches the words.
 
-let sfTrip = null, sfBaseItems = null;
+let sfTrip = null, sfBaseItems = null, sfPacking = null;
 const sfDate = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
 
 async function openSafaris() {
@@ -1328,28 +1334,57 @@ function drawSafariTrip() {
   $("sf-upload").textContent = lists?.length ? "Upload a new version of the shopping list" : "Upload shopping list";
   $("sf-upload").hidden = trip.status === "closed";
   $("sf-lists").innerHTML = lists?.length ? `Shopping list uploaded by ${esc(lists[0].people?.name || "")}, ${new Date(lists[0].uploaded_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}${lists[0].file_url ? ` · <button type="button" class="secondary small" id="sf-file-dl">Download it</button>` : ""}${lists.length > 1 ? ` · ${lists.length} versions` : ""}` : "";
+  $("sf-topup-box").hidden = !trip.id || trip.status === "closed";
   $("sf-issues").innerHTML = issues.length ? issues.map(drawSfIssue).join("") : "";
 }
 
 function drawSfIssue(i) {
   const base = i.lines.filter((l) => l.kind === "base"), buy = i.lines.filter((l) => l.kind === "buy"), un = i.lines.filter((l) => l.kind === "unmatched");
-  const short = base.filter((l) => l.base_holds < l.quantity_asked);
-  const title = i.resupply === "top-up" ? "Top-up" : i.resupply;
-  return `<div class="sf-issue">
-    <h3>${title}${i.planned_on ? " · " + sfDate(i.planned_on) : ""}</h3>
-    <div class="muted">${base.length} from Base stock · ${buy.length} bought for the trip${un.length ? ` · <span class="sf-short">${un.length} to match</span>` : ""}${short.length ? ` · <span class="sf-short">${short.length} short at Base</span>` : ""}</div>
+  const left = (l) => Math.max(0, l.quantity_asked - l.quantity_packed);
+  const toPack = base.filter((l) => left(l) > 0);
+  const short = toPack.filter((l) => l.base_holds < left(l));
+  const topUp = i.resupply === "top-up";
+  const open = sfTrip.trip.status !== "closed";
+  const packing = sfPacking === i.id;
+  const state = !base.length ? "" : !toPack.length ? `<span style="color:var(--ok);font-weight:600">Packed</span>`
+    : base.some((l) => l.quantity_packed > 0) ? "Part packed" : "To pack";
+  const packedBy = (i.packs || []).map((p) => `${esc(p.by)}, ${new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`).join("; ");
+  return `<div class="sf-issue" data-sf-issue="${i.id}">
+    <h3>${topUp ? "Top-up" : i.resupply}${i.planned_on ? " · " + sfDate(i.planned_on) : ""}${state ? " · " + state : ""}</h3>
+    <div class="muted">${base.length} from Base stock · ${buy.length} bought for the trip${un.length ? ` · <span class="sf-short">${un.length} to match</span>` : ""}${short.length ? ` · <span class="sf-short">${short.length} short at Base</span>` : ""}${packedBy ? ` · packed by ${packedBy}` : ""}</div>
     ${un.map((l) => `<div class="sf-unmatched"><b>${esc(l.list_text)}</b> · ${fmtQty(l.quantity_asked)} asked
         <div class="muted">This line isn't matched yet. Choose the Base item it comes from, or say it's bought for the trip. The answer is remembered.</div>
         <div class="pick"><select data-sf-item="${l.id}" aria-label="Base item">${sfItemOptions()}</select>
           <button type="button" class="secondary small" data-sf-match="${l.id}" data-kind="base">Use this item</button>
           <button type="button" class="secondary small" data-sf-match="${l.id}" data-kind="buy">Bought for the trip</button>
           <button type="button" class="secondary small" data-sf-match="${l.id}" data-kind="off">Off the list</button></div></div>`).join("")}
-    ${base.map((l) => `<div class="sf-line"><span class="d">${esc(l.item?.name || "")}${l.item?.standard_size ? " · " + esc(l.item.standard_size) : ""}
-        <span class="muted">· ${esc(l.list_text)}</span></span>
+    ${base.map((l) => {
+      const need = left(l), can = Math.min(need, Math.max(0, l.base_holds));
+      const label = `${l.item?.name || ""}${l.item?.standard_size ? " · " + l.item.standard_size : ""}`;
+      return `<div class="sf-line"><span class="d">${esc(label)}
+        ${l.list_text !== label ? `<span class="muted">· ${esc(l.list_text)}</span>` : ""}
+        ${l.quantity_packed > 0 ? `<span class="muted"> · packed ${fmtQty(l.quantity_packed)}</span>` : ""}</span>
         <span class="n">${fmtQty(l.quantity_asked)}</span>
-        <span class="n ${l.base_holds < l.quantity_asked ? "sf-short" : "muted"}">Base ${fmtQty(l.base_holds)}</span></div>`).join("")}
+        ${packing && need > 0
+          ? `<input type="number" inputmode="decimal" min="0" max="${can}" step="any" value="${can}" data-sf-pack="${l.id}" style="width:72px;min-width:0" aria-label="Pack now">`
+          : `<span class="n ${need > 0 && l.base_holds < need ? "sf-short" : "muted"}">${need > 0 ? "Base " + fmtQty(l.base_holds) : "✓"}</span>`}
+        ${topUp && open && !l.quantity_packed ? `<button type="button" class="secondary small" data-sf-remove="${l.id}" aria-label="Remove">✕</button>` : ""}</div>
+        ${packing && need > can ? `<div class="hint bad" style="text-align:right">Base holds ${fmtQty(Math.max(0, l.base_holds))}: ${fmtQty(need - can)} short, on the shortage list</div>` : ""}`;
+    }).join("")}
     ${buy.length ? `<details style="margin-top:8px"><summary class="muted">Bought for the trip (${buy.length})</summary>
-      ${buy.map((l) => `<div class="sf-line"><span class="d">${esc(l.list_text)}</span><span class="n">${fmtQty(l.quantity_asked)}</span></div>`).join("")}</details>` : ""}
+      ${buy.map((l) => `<div class="sf-line"><span class="d">${esc(l.list_text)}</span><span class="n">${fmtQty(l.quantity_asked)}</span>
+        ${topUp && open ? `<button type="button" class="secondary small" data-sf-remove="${l.id}" aria-label="Remove">✕</button>` : ""}</div>`).join("")}</details>` : ""}
+    ${topUp && open ? `<div class="pick row" style="margin-top:10px">
+        <div style="flex:1 1 220px"><label>Add a line</label><select data-sf-add-item="${i.id}">${sfItemOptions().replace("Choose a Base item…", "A Base item…")}</select></div>
+        <div style="flex:1 1 160px"><label>or bought for the trip</label><input type="text" data-sf-add-text="${i.id}" placeholder="e.g. Lettuce"></div>
+        <div style="flex:0 0 90px"><label>How many</label><input type="number" inputmode="decimal" min="0" step="any" data-sf-add-qty="${i.id}" style="min-width:0;width:90px"></div>
+        <div><button type="button" class="secondary" data-sf-add="${i.id}">Add</button></div></div>` : ""}
+    <div class="accept-bar">
+      ${open && toPack.length && !packing ? `<button type="button" data-sf-pack-start="${i.id}">Pack</button>` : ""}
+      ${packing ? `<button type="button" data-sf-pack-confirm="${i.id}">Confirm packed</button><button type="button" class="secondary" data-sf-pack-cancel="1">Cancel</button>` : ""}
+      ${base.length || buy.length ? `<button type="button" class="secondary" data-sf-sheet="${i.id}">Packing sheet (Excel)</button>` : ""}
+    </div>
+    ${packing ? `<div class="hint">Confirming takes these quantities out of Base stock and charges them to ${esc(sfTrip.trip.code)}. Anything Base doesn't hold stays to pack later.</div>` : ""}
   </div>`;
 }
 
@@ -1365,16 +1400,117 @@ function sfItemOptions() {
 }
 
 $("sf-issues").addEventListener("click", async (ev) => {
-  const b = ev.target.closest("[data-sf-match]");
-  if (!b) return;
-  const id = b.dataset.sfMatch, kind = b.dataset.kind;
-  const body = { line_id: id, kind };
-  if (kind === "base") {
-    body.stock_item_id = document.querySelector(`[data-sf-item="${id}"]`).value;
-    if (!body.stock_item_id) { $("sf-status").innerHTML = `<div class="error">Choose the Base item first.</div>`; return; }
-  }
-  try { sfTrip = await api("match_list_line", { body }); $("sf-status").innerHTML = ""; drawSafariTrip(); }
-  catch (e) { $("sf-status").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  const t = ev.target.closest("button");
+  if (!t) return;
+  const say = (m) => { $("sf-status").innerHTML = m ? `<div class="error">${esc(m)}</div>` : ""; };
+  try {
+    if (t.dataset.sfMatch) {
+      const id = t.dataset.sfMatch, kind = t.dataset.kind, body = { line_id: id, kind };
+      if (kind === "base") {
+        body.stock_item_id = document.querySelector(`[data-sf-item="${id}"]`).value;
+        if (!body.stock_item_id) return say("Choose the Base item first.");
+      }
+      sfTrip = await api("match_list_line", { body });
+    } else if (t.dataset.sfPackStart) {
+      sfPacking = t.dataset.sfPackStart;
+    } else if (t.dataset.sfPackCancel) {
+      sfPacking = null;
+    } else if (t.dataset.sfPackConfirm) {
+      const lines = [...document.querySelectorAll(`[data-sf-issue="${t.dataset.sfPackConfirm}"] [data-sf-pack]`)]
+        .map((inp) => ({ line: inp.dataset.sfPack, quantity: Number(inp.value) }));
+      const over = lines.find((l) => { const inp = document.querySelector(`[data-sf-pack="${l.line}"]`); return l.quantity > Number(inp.max); });
+      if (over) return say("A quantity is more than Base holds or the line needs.");
+      if (!lines.some((l) => l.quantity > 0)) return say("Nothing to pack: every quantity is 0.");
+      t.disabled = true; t.textContent = "Packing…";
+      sfTrip = await api("pack_issue", { body: { issue_id: t.dataset.sfPackConfirm, lines } });
+      sfPacking = null;
+      $("sf-status").innerHTML = `<div class="notice">Packed. That stock has left Base and is charged to ${esc(sfTrip.trip.code)}.</div>`;
+      drawSafariTrip();
+      return;
+    } else if (t.dataset.sfRemove) {
+      sfTrip = await api("remove_issue_line", { body: { line_id: t.dataset.sfRemove } });
+    } else if (t.dataset.sfAdd) {
+      const id = t.dataset.sfAdd;
+      const body = { issue_id: id, stock_item_id: document.querySelector(`[data-sf-add-item="${id}"]`).value || null,
+        text: document.querySelector(`[data-sf-add-text="${id}"]`).value, quantity: Number(document.querySelector(`[data-sf-add-qty="${id}"]`).value) };
+      sfTrip = await api("add_issue_line", { body });
+    } else if (t.dataset.sfSheet) {
+      return await sfPackingSheet(t.dataset.sfSheet);
+    } else return;
+    say("");
+    drawSafariTrip();
+  } catch (e) { say(e.message); drawSafariTrip(); }
+});
+$("sf-topup").addEventListener("click", async () => {
+  try {
+    sfTrip = await api("add_top_up", { body: { departure_id: sfTrip.trip.departure_id, planned_on: $("sf-topup-date").value } });
+    $("sf-status").innerHTML = `<div class="notice">Top-up added below. Add its lines, then pack it.</div>`;
+    drawSafariTrip();
+  } catch (e) { $("sf-status").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+// Download an Excel workbook built by fill(ws).
+async function sfDownload(name, title, fill) {
+  await loadExcelJs();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Sheet", { pageSetup: { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  ws.addRow([title]).font = { bold: true, size: 14 };
+  fill(ws);
+  const blob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name.replace(/[\\/:*?"<>|]+/g, " ") + ".xlsx";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// The packing sheet: what to pack for one resupply, with a tick column.
+async function sfPackingSheet(issueId) {
+  const i = sfTrip.issues.find((x) => x.id === issueId), trip = sfTrip.trip;
+  const label = `${i.resupply === "top-up" ? "Top-up" : i.resupply}${i.planned_on ? " " + sfDate(i.planned_on) : ""}`;
+  await sfDownload(`${trip.code} ${label} packing sheet`, `${trip.code} · ${trip.type} · ${label} · packing sheet`, (ws) => {
+    ws.addRow([`${trip.guests} guests · ${sfDate(trip.start_date)}–${sfDate(trip.end_date)} · Packed by: ____________  Date: ________`]);
+    ws.addRow([]);
+    const head = ws.addRow(["Item", "Size", "Asked", "Packed already", "To pack", "Base holds", "✓"]);
+    head.font = { bold: true };
+    for (const l of i.lines.filter((x) => x.kind === "base")) {
+      const left = Math.max(0, l.quantity_asked - l.quantity_packed);
+      ws.addRow([l.item?.name || l.list_text, l.item?.standard_size || "", l.quantity_asked, l.quantity_packed || "", left || "", l.base_holds, ""]);
+    }
+    const buy = i.lines.filter((x) => x.kind === "buy");
+    if (buy.length) {
+      ws.addRow([]); ws.addRow(["Bought for the trip"]).font = { bold: true };
+      for (const l of buy) ws.addRow([l.list_text, "", l.quantity_asked]);
+    }
+    ws.columns = [{ width: 38 }, { width: 11 }, { width: 8 }, { width: 14 }, { width: 9 }, { width: 11 }, { width: 6 }];
+  });
+}
+
+// The shortage list: across every open trip, what Base can't cover yet.
+$("sf-short-open").addEventListener("click", async () => {
+  const box = $("sf-short");
+  if (!box.hidden) { box.hidden = true; return; }
+  box.hidden = false; box.innerHTML = `<span class="muted">Loading…</span>`;
+  try {
+    const { items } = await api("safari_shortages");
+    sfShort = items;
+    box.innerHTML = items.length ? `<div class="tile">${items.map((n) => `<div class="sf-line"><span class="d"><b>${esc(n.name)}</b>${n.size ? " · " + esc(n.size) : ""}
+        <span class="muted">· for ${n.for.map((f) => `${esc(f.code)} ${f.resupply === "top-up" ? "top-up" : f.resupply}${f.on ? " " + sfDate(f.on) : ""}`).join(", ")} · Base holds ${fmtQty(n.base_holds)}</span></span>
+        <span class="n sf-short">buy ${fmtQty(n.short)}</span></div>`).join("")}</div>
+      <div class="actions" style="margin-top:8px"><button type="button" class="secondary" id="sf-short-dl">Download for the town driver (Excel)</button></div>`
+      : `<div class="notice">Nothing short: Base holds everything still to pack.</div>`;
+  } catch (e) { box.innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+let sfShort = [];
+$("sf-short").addEventListener("click", async (ev) => {
+  if (ev.target.id !== "sf-short-dl") return;
+  const today = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  await sfDownload(`Safari shortages ${today}`, `Safari shortages · ${today}`, (ws) => {
+    ws.addRow(["To buy in town for safari trips. Bring the invoice back to Base."]);
+    ws.addRow([]);
+    ws.addRow(["Item", "Size", "Buy", "For", "✓"]).font = { bold: true };
+    for (const n of sfShort) ws.addRow([n.name, n.size || "", n.short, n.for.map((f) => `${f.code} ${f.resupply === "top-up" ? "top-up" : f.resupply}${f.on ? " " + sfDate(f.on) : ""}`).join(", "), ""]);
+    ws.columns = [{ width: 36 }, { width: 11 }, { width: 7 }, { width: 34 }, { width: 6 }];
+  });
 });
 $("sf-lists").addEventListener("click", async (ev) => {
   if (ev.target.id !== "sf-file-dl") return;
