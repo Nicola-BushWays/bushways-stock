@@ -122,6 +122,13 @@
 
   .recent-list, .creator-list { display: flex; flex-direction: column; gap: 8px; }
   .recent-list button { text-align: left; width: 100%; }
+  .al-lines { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .al-line { background: var(--offwhite); border-radius: 6px; padding: 10px 12px; }
+  .al-line .top { display: flex; gap: 12px; align-items: baseline; }
+  .al-line .top .d { flex: 1; font-weight: 600; }
+  .al-line .pick { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .al-line .pick select { min-width: 0; flex: 1 1 140px; }
+  .al-line .pick select.vat { flex: 0 0 auto; }
   .creator { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; background: var(--offwhite); border-radius: 6px; }
 
   .viewer { position: fixed; inset: 0; background: rgba(18,45,49,.9); display: none; overflow: auto; z-index: 20; cursor: zoom-out; }
@@ -282,7 +289,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-04a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-08a</p>
 </header>
 
 <main>
@@ -325,6 +332,7 @@
         <button type="button" class="secondary small" data-tab="sheet" aria-pressed="false">Stock sheets</button>
         <button type="button" class="secondary small" data-tab="take" aria-pressed="false">Stock take</button>
         <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
+        <button type="button" class="secondary small" data-tab="allocate" aria-pressed="false" id="tab-allocate" hidden>Allocate</button>
       </span>
       <span>Signed in as <span class="who" id="who"></span> <span class="muted" id="who-extra"></span>
         <button type="button" class="secondary small" id="to-tools" hidden>← Tools</button>
@@ -480,6 +488,41 @@
     <section class="card">
       <h2>Returns sheets</h2>
       <div class="recent-list" id="rt-list"><span class="muted">Loading…</span></div>
+    </section>
+   </div>
+
+   <!-- Allocate: cost centres for Dext (D-028), Nicola, Mark and Seth only -->
+   <div id="view-allocate" hidden>
+    <section class="card">
+      <h2>Invoices to allocate</h2>
+      <p class="muted">Give each line its company and account code. The codes are printed as a band across the top of the photo, in amounts excluding VAT, ready for Dext. Load sheets and receiving don't wait for this.</p>
+      <div class="recent-list" id="al-list"><span class="muted">Loading…</span></div>
+      <div id="al-error"></div>
+    </section>
+    <section class="card" id="al-card" hidden>
+      <h2 id="al-title"></h2>
+      <div class="muted" id="al-meta"></div>
+      <div class="pages" id="al-pages" style="margin-top:10px"></div>
+      <div id="al-edit">
+        <label style="display:flex;gap:8px;align-items:center;margin-top:12px;font-weight:600">
+          <input type="checkbox" id="al-rations" style="min-width:0"> A staff rations order
+        </label>
+        <div class="hint muted" id="al-rations-hint"></div>
+        <div class="row" style="margin-top:12px">
+          <div><label for="al-all-company">Set every line to</label><select id="al-all-company"></select></div>
+          <div><label for="al-all-code">Account code</label><select id="al-all-code"></select></div>
+          <div><button type="button" class="secondary" id="al-all-apply">Apply to every line</button></div>
+        </div>
+      </div>
+      <div class="al-lines" id="al-lines"></div>
+      <h2 style="margin-top:16px">The band</h2>
+      <div id="al-band"></div>
+      <div class="accept-bar" id="al-bar"></div>
+      <div id="al-action-error"></div>
+    </section>
+    <section class="card">
+      <h2>Recently allocated</h2>
+      <div class="recent-list" id="al-done"><span class="muted">Loading…</span></div>
     </section>
    </div>
 
@@ -1195,11 +1238,302 @@ function startApp() {
   $("who-extra").textContent = session.person.can_create_item ? "· can create stock items" : "";
   $("creator-add").hidden = !session.person.can_create_item;
   $("new-stock-item").hidden = !session.person.can_create_item;
+  $("tab-allocate").hidden = !session.person.can_allocate;
   ensureLocations().catch(() => showError(new Error(NO_CAMPS + " Reload the page to try again.")));
   loadRecent();
   loadCreators();
   showView("invoices");
 }
+
+// --- Allocate: cost centres for Dext (docs/modules/cost-centres.md, D-028) -------
+//
+// Each line gets a company and one of that company's own account codes; the
+// same number means different things in different companies, so a code is
+// never shown or kept without its company. The band is drawn here, onto the
+// photo, and the server checks it shows the same amounts it works out.
+
+let acct = null;          // { companies, codes, places, rules } once loaded
+let al = null;            // the invoice open on the Allocate tab
+const alAmt = (incl, vat) => Math.round(Number(incl) / (1 + vat / 100) * 100) / 100;
+
+async function openAllocate() {
+  $("al-error").innerHTML = "";
+  try {
+    if (!acct) acct = await api("account_codes");
+    const { waiting, done } = await api("allocations");
+    const row = (i, extra) => {
+      const days = Math.floor((Date.now() - Date.parse(i.captured_at)) / 86400e3);
+      return `<button type="button" class="secondary" data-al-open="${i.id}">
+        ${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
+        <span class="muted"> · BWP ${money(i.total_incl ?? i.lines_total_incl)} · ${extra(i, days)}</span></button>`;
+    };
+    $("al-list").innerHTML = waiting.length ? waiting.map((i) => row(i, (i, d) =>
+      d >= 3 ? `<strong style="color:var(--bad)">waiting ${d} days</strong>` : d ? `waiting ${d} day${d > 1 ? "s" : ""}` : "read today")).join("")
+      : `<span class="muted">Nothing waiting. Every accepted invoice has its cost centres.</span>`;
+    $("al-done").innerHTML = done.length ? done.map((i) => row(i, (i) =>
+      `${i.allocated_outside ? "done outside the tool" : "allocated"} by ${esc(i.allocator?.name || "")}, ${new Date(i.allocated_at).toLocaleDateString("en-GB")}`)).join("")
+      : `<span class="muted">None yet.</span>`;
+  } catch (e) { $("al-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-al-open]");
+  if (b) openAllocation(b.dataset.alOpen);
+});
+$("al-card").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-photo]");
+  if (b) openViewer(b.dataset.photo);
+});
+
+async function openAllocation(id) {
+  $("al-action-error").innerHTML = "";
+  try {
+    al = await api("allocation", { query: `&id=${encodeURIComponent(id)}` });
+    drawAllocation();
+    $("al-card").hidden = false;
+    $("al-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) { $("al-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+
+const alCompany = (key) => acct.companies.find((c) => c.key === key);
+const alCodes = (company) => acct.codes.filter((c) => c.company === company);
+const alCode = (company, code) => acct.codes.find((c) => c.company === company && c.code === code);
+const alRule = (company, rule) => acct.rules.find((r) => r.company === company && r.rule === rule)?.code ?? null;
+const alLocked = () => !!al?.invoice.allocated_at;
+
+function alCompanyOptions(sel) {
+  return `<option value="">Choose…</option>` + acct.companies.map((c) =>
+    `<option value="${c.key}"${c.key === sel ? " selected" : ""}>${esc(c.band_label)} · ${esc(c.name)}</option>`).join("");
+}
+function alCodeOptions(company, sel) {
+  if (!company) return `<option value="">Choose a company first</option>`;
+  return `<option value="">Choose…</option>` + alCodes(company).map((c) =>
+    `<option value="${c.code}" title="${esc(c.name)}"${c.code === sel ? " selected" : ""}>${esc(c.code)} · ${esc(c.short_name)}${c.site ? ` (${c.site})` : ""}</option>`).join("");
+}
+
+// What the tool would propose for a line, given the rations tick: the
+// company's rations account, or its account for the line's stock sheet.
+function alPropose(l) {
+  if (!l.company) return null;
+  if ($("al-rations").checked) return alRule(l.company, "rations");
+  return l.sheet ? alRule(l.company, l.sheet) : null;
+}
+
+function drawAllocation() {
+  const inv = al.invoice, locked = alLocked();
+  $("al-title").textContent = `${inv.supplier || "Unknown supplier"} · ${inv.invoice_number || "no number"}`;
+  $("al-meta").textContent = [inv.locations?.name, inv.invoice_date, inv.recipient_name && `billed to ${inv.recipient_name}`,
+    inv.order_number && `order ${inv.order_number}`].filter(Boolean).join(" · ");
+  $("al-pages").innerHTML = (inv.photo_urls || [inv.photo_url]).filter(Boolean).map((u, i) =>
+    `<button type="button" class="secondary small" data-photo="${esc(u)}">View photo ${i + 1}</button>`).join(" ");
+  $("al-edit").hidden = locked;
+  $("al-rations").checked = !!(locked ? inv.allocation_rations : al.rationsTick ?? inv.rations_proposed);
+  $("al-rations-hint").textContent = inv.rations_proposed && !locked
+    ? "Ticked because the invoice mentions rations. Untick it if this is guest food." : "";
+  $("al-all-company").innerHTML = alCompanyOptions(al.lines[0]?.company);
+  $("al-all-code").innerHTML = alCodeOptions($("al-all-company").value, null);
+  $("al-lines").innerHTML = al.lines.map((l, i) => {
+    const ex = l.line_total_incl == null ? null : alAmt(l.line_total_incl, l.vat);
+    const what = l.stock_items?.name ? `${esc(l.stock_items.name)} · ${esc(l.sheet || "")}` : l.match_status === "not_stock" ? "not stock" : "";
+    const vats = [14, 0].includes(l.vat) ? [14, 0] : [l.vat, 14, 0];
+    const pick = locked
+      ? `<div class="muted">${esc(alCompany(l.company)?.band_label || "")} · ${esc(l.code || "")} ${esc(alCode(l.company, l.code)?.short_name || "")} · VAT ${l.vat}%</div>`
+      : `<div class="pick">
+          <select data-al-company="${i}" aria-label="Company">${alCompanyOptions(l.company)}</select>
+          <select data-al-code="${i}" aria-label="Account code">${alCodeOptions(l.company, l.code)}</select>
+          <select data-al-vat="${i}" class="vat" aria-label="VAT">${vats.map((v) => `<option value="${v}"${v === l.vat ? " selected" : ""}>VAT ${v}%</option>`).join("")}</select>
+        </div>`;
+    return `<div class="al-line">
+      <div class="top"><span class="d">${esc(l.raw_description)}</span><span>BWP ${money(l.line_total_incl)}</span></div>
+      <div class="top muted"><span class="d" style="font-weight:400">${esc(what)}</span><span>excl VAT ${money(ex)}</span></div>
+      ${pick}</div>`;
+  }).join("");
+  drawBand();
+}
+
+// The band's rows: one per company and code, in the order first used, with
+// the KA site ("KA - BRC") taken from the codes themselves.
+function alBand() {
+  const groups = new Map();
+  for (const l of al.lines) {
+    if (!l.company || !l.code || l.line_total_incl == null) return null;
+    const k = `${l.company}|${l.code}`;
+    const g = groups.get(k) || { company: l.company, code: l.code, incl: {} };
+    g.incl[l.vat] = (g.incl[l.vat] || 0) + Number(l.line_total_incl);
+    groups.set(k, g);
+  }
+  // VAT comes off each code's total at each rate, as the supplier works it
+  // out, not off every line: line by line drifts a cent (camp-stock D-028).
+  const rows = [...groups.values()].map(({ incl, ...g }) => ({ ...g,
+    amount: Math.round(Object.entries(incl).reduce((a, [v, t]) => a + alAmt(t, Number(v)), 0) * 100) / 100 }));
+  const byCompany = new Map();
+  for (const r of rows) {
+    const c = alCompany(r.company), code = alCode(r.company, r.code);
+    const label = c.band_label + (code?.site ? ` - ${code.site}` : "");
+    if (!byCompany.has(label)) byCompany.set(label, []);
+    byCompany.get(label).push({ ...r, name: code?.short_name || "" });
+  }
+  return { rows, sections: [...byCompany].map(([label, rs]) => ({ label, rows: rs })),
+    total: Math.round(rows.reduce((a, r) => a + r.amount, 0) * 100) / 100 };
+}
+
+function alSums() {
+  const incl = Math.round(al.lines.reduce((a, l) => a + Number(l.line_total_incl ?? 0), 0) * 100) / 100;
+  const printed = al.invoice.total_incl == null ? null : Number(al.invoice.total_incl);
+  return { incl, printed, ok: printed == null || Math.abs(incl - printed) <= 0.05 };
+}
+
+function drawBand() {
+  const band = alBand(), sums = alSums(), locked = alLocked(), inv = al.invoice;
+  const missing = al.lines.filter((l) => !l.company || !l.code).length;
+  let html = "";
+  if (band) {
+    html = `<div class="tile" style="font-family:Arial,sans-serif">` + band.sections.map((s) =>
+      `<div style="font-weight:900">${esc(s.label)} · Cost centres (excl. VAT)</div>` + s.rows.map((r) =>
+        `<div style="display:flex;gap:12px"><strong style="min-width:56px">${esc(r.code)}</strong><span style="flex:1">${esc(r.name)}</span><span>P ${money(r.amount)}</span></div>`).join("")).join("") +
+      `<div style="display:flex;border-top:2px solid var(--forest);margin-top:4px;padding-top:4px;font-weight:900"><span style="flex:1">Total</span><span>P ${money(band.total)}</span></div></div>`;
+  } else {
+    html = `<div class="muted">${missing} line${missing === 1 ? "" : "s"} still need${missing === 1 ? "s" : ""} a cost centre.</div>`;
+  }
+  html += sums.ok ? `<div class="hint">The lines add up to the invoice total, BWP ${money(sums.incl)} including VAT.</div>`
+    : `<div class="hint bad">The lines add up to BWP ${money(sums.incl)} but the invoice says BWP ${money(sums.printed)}. Put the invoice right on the Invoices tab first.</div>`;
+  $("al-band").innerHTML = html;
+  const bar = [];
+  if (!locked) {
+    bar.push(`<button type="button" id="al-go"${band && sums.ok ? "" : " disabled"}>Allocate and stamp the photo</button>`);
+    bar.push(`<button type="button" class="secondary" id="al-outside">Already in Dext: take it off the list</button>`);
+  } else {
+    bar.push(`<span class="muted">${inv.allocated_outside ? "Done outside the tool" : "Allocated"} by ${esc(inv.allocator?.name || "")}, ${new Date(inv.allocated_at).toLocaleDateString("en-GB")}.</span>`);
+    if (inv.stamped_photo_url) {
+      bar.push(`<button type="button" class="secondary" data-photo="${esc(inv.stamped_photo_url)}">View the stamped photo</button>`);
+      bar.push(`<button type="button" id="al-download">Download the stamped photo</button>`);
+    }
+    bar.push(`<button type="button" class="secondary" id="al-reopen">Reopen to change it</button>`);
+  }
+  $("al-bar").innerHTML = bar.join("");
+}
+
+$("al-lines").addEventListener("change", (ev) => {
+  const t = ev.target;
+  if (t.dataset.alVat) { al.lines[t.dataset.alVat].vat = Number(t.value); drawAllocation(); }
+  if (t.dataset.alCompany) {
+    const l = al.lines[t.dataset.alCompany];
+    l.company = t.value || null;
+    l.code = alPropose(l);
+    drawAllocation();
+  }
+  if (t.dataset.alCode) { al.lines[t.dataset.alCode].code = t.value || null; drawBand(); }
+});
+
+// Ticking or unticking rations moves every line still on the tool's own
+// proposal; a code someone chose by hand stays.
+$("al-rations").addEventListener("change", () => {
+  const was = !$("al-rations").checked;
+  for (const l of al.lines) {
+    const before = !l.company ? null : was ? alRule(l.company, "rations") : l.sheet ? alRule(l.company, l.sheet) : null;
+    if (l.code === before || !l.code) l.code = alPropose(l);
+  }
+  al.rationsTick = $("al-rations").checked;
+  drawAllocation();
+});
+
+$("al-all-company").addEventListener("change", () => { $("al-all-code").innerHTML = alCodeOptions($("al-all-company").value, null); });
+$("al-all-apply").addEventListener("click", () => {
+  const company = $("al-all-company").value, code = $("al-all-code").value;
+  if (!company || !code) { $("al-action-error").innerHTML = `<div class="error">Choose a company and an account code first.</div>`; return; }
+  $("al-action-error").innerHTML = "";
+  for (const l of al.lines) { l.company = company; l.code = code; }
+  drawAllocation();
+});
+
+const alInitials = (name) => String(name || "").split(/\s+/).filter(Boolean).map((w) => w[0].toUpperCase()).join("");
+
+function alLoadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("A photo of this invoice could not be loaded to stamp it."));
+    img.src = url;
+  });
+}
+
+// The band across the top, then every page of the invoice beneath it, as
+// one JPEG: the layout Nicola tested through Dext on 2026-11-07.
+async function alStamp(band) {
+  const urls = (al.invoice.photo_urls || [al.invoice.photo_url]).filter(Boolean);
+  const imgs = await Promise.all(urls.map(alLoadImage));
+  const W = Math.min(1200, Math.max(...imgs.map((i) => i.naturalWidth)));
+  const pad = Math.round(W * 0.025), lh = Math.round(W * 0.04);
+  const f = (px, bold) => `${bold ? "bold " : ""}${Math.round(px)}px Arial, Helvetica, sans-serif`;
+  const bandRows = band.sections.reduce((a, s) => a + 1 + s.rows.length, 0);
+  const bandH = pad + bandRows * lh + Math.round(lh * 0.4) + lh + Math.round(lh * 0.9) + pad;
+  const heights = imgs.map((i) => Math.round(i.naturalHeight * W / i.naturalWidth));
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = bandH + heights.reduce((a, h) => a + h, 0);
+  const g = cv.getContext("2d");
+  g.fillStyle = "#fff"; g.fillRect(0, 0, W, cv.height);
+  g.strokeStyle = "#000"; g.lineWidth = 3; g.strokeRect(4, 4, W - 8, bandH - 8);
+  g.fillStyle = "#000"; g.textBaseline = "top";
+  let y = pad;
+  const right = W - pad;
+  for (const s of band.sections) {
+    g.font = f(lh * 0.8, true); g.textAlign = "left";
+    g.fillText(`${s.label}  ·  Cost centres (excl. VAT)`, pad, y); y += lh;
+    for (const r of s.rows) {
+      g.font = f(lh * 0.68, true); g.textAlign = "left"; g.fillText(r.code, pad, y);
+      g.font = f(lh * 0.68, false); g.fillText(r.name, pad + lh * 2.4, y);
+      g.textAlign = "right"; g.fillText(`P ${money(r.amount)}`, right, y);
+      y += lh;
+    }
+  }
+  y += Math.round(lh * 0.15);
+  g.fillRect(pad, y, right - pad, 2);
+  y += Math.round(lh * 0.25);
+  g.font = f(lh * 0.68, true); g.textAlign = "left"; g.fillText("Total", pad, y);
+  g.textAlign = "right"; g.fillText(`P ${money(band.total)}  matches invoice excl. VAT`, right, y);
+  y += lh;
+  g.font = f(lh * 0.52, false); g.textAlign = "left";
+  g.fillText(`Allocated ${alInitials(session.person.name)} ${new Date().toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "2-digit" })}`, pad, y);
+  let top = bandH;
+  imgs.forEach((img, i) => { g.drawImage(img, 0, top, W, heights[i]); top += heights[i]; });
+  return cv.toDataURL("image/jpeg", 0.82);
+}
+
+$("al-bar").addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button");
+  if (!t || t.dataset.photo) return;
+  $("al-action-error").innerHTML = "";
+  const id = al.invoice.id;
+  try {
+    if (t.id === "al-go") {
+      const band = alBand();
+      t.disabled = true; t.textContent = "Stamping…";
+      const stamped_photo = await alStamp(band);
+      al = await api("allocate_invoice", { body: { invoice_id: id, rations: $("al-rations").checked, stamped_photo,
+        lines: al.lines.map((l) => ({ id: l.id, company: l.company, code: l.code, vat: l.vat })),
+        band: band.rows.map((r) => ({ company: r.company, code: r.code, amount: r.amount })) } });
+    } else if (t.id === "al-outside") {
+      if (!confirm("Take this invoice off the list without a band? Use this only when it has already gone to Dext with its cost centres.")) return;
+      al = await api("allocate_outside", { body: { invoice_id: id } });
+    } else if (t.id === "al-reopen") {
+      al = await api("reopen_allocation", { body: { invoice_id: id } });
+    } else if (t.id === "al-download") {
+      const blob = await (await fetch(al.invoice.stamped_photo_url)).blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${al.invoice.supplier || "Invoice"} ${al.invoice.invoice_number || ""} stamped.jpg`.replace(/[\\/:*?"<>|#]+/g, " ").replace(/\s+/g, " ");
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      return;
+    } else return;
+    drawAllocation();
+    openAllocate();
+  } catch (e) {
+    $("al-action-error").innerHTML = `<div class="error">${esc(e.message)}</div>`;
+    drawBand();
+  }
+});
 
 // --- Invoices / Load sheets ---------------------------------------------------
 
@@ -1212,6 +1546,7 @@ function showView(name) {
   $("view-transfers").hidden = name !== "transfers";
   $("view-sheet").hidden = name !== "sheet";
   $("view-take").hidden = name !== "take";
+  $("view-allocate").hidden = name !== "allocate";
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   if (name === "loads") refreshLoads();
   if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
@@ -1220,6 +1555,7 @@ function showView(name) {
   if (name === "transfers") loadTransfers();
   if (name === "sheet") openStockSheet();
   if (name === "take") openStockTakes();
+  if (name === "allocate") openAllocate();
 }
 document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.tab)));
 
