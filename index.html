@@ -123,7 +123,12 @@
   .recent-list, .creator-list { display: flex; flex-direction: column; gap: 8px; }
   .recent-list button { text-align: left; width: 100%; }
   .sf-issue { border-top: 2px solid var(--sand); padding-top: 12px; margin-top: 14px; }
-  .sf-issue h3 { margin: 0 0 6px; font-size: 15px; color: var(--forest); }
+  .sf-issue h3 { margin: 0 0 6px; font-size: 15px; color: var(--forest); display: inline; }
+  .sf-issue > summary { cursor: pointer; list-style: none; padding: 4px 0 6px 22px; position: relative; }
+  .sf-issue > summary::-webkit-details-marker { display: none; }
+  .sf-issue > summary::before { content: "▸"; position: absolute; left: 0; top: 1px; color: var(--forest); font-size: 19px; line-height: 1; }
+  .sf-issue[open] > summary::before { content: "▾"; }
+  .sf-issue > summary .muted { margin-top: 4px; }
   .sf-line { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--offwhite); }
   .sf-line .d { flex: 1; }
   .sf-line .n { min-width: 64px; text-align: right; }
@@ -308,7 +313,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09d</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09e</p>
 </header>
 
 <main>
@@ -1302,6 +1307,7 @@ function startApp() {
 // dates beneath, and each line's words. The server matches the words.
 
 let sfTrip = null, sfBaseItems = null, sfPacking = null;
+const sfOpen = new Map(); // issue id → open or closed, once someone has chosen
 const sfDate = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "";
 
 async function openSafaris() {
@@ -1345,10 +1351,16 @@ function drawSafariTrip() {
   $("sf-upload").hidden = trip.status === "closed";
   $("sf-lists").innerHTML = lists?.length ? `Shopping list uploaded by ${esc(lists[0].people?.name || "")}, ${new Date(lists[0].uploaded_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}${lists[0].file_url ? ` · <button type="button" class="secondary small" id="sf-file-dl">Download it</button>` : ""}${lists.length > 1 ? ` · ${lists.length} versions` : ""}` : "";
   $("sf-topup-box").hidden = !trip.id || trip.status === "closed";
-  $("sf-issues").innerHTML = issues.length ? issues.map(drawSfIssue).join("") : "";
+  // Each resupply folds away. Until someone opens or closes one, the open ones
+  // are the one being packed, any with lines to match, and the first not packed.
+  const done = (i) => !i.lines.some((l) => l.kind === "base" && l.quantity_asked > l.quantity_packed);
+  const first = issues.find((i) => !done(i));
+  const isOpen = (i) => sfOpen.has(i.id) ? sfOpen.get(i.id)
+    : sfPacking === i.id || i.lines.some((l) => l.kind === "unmatched") || i === first;
+  $("sf-issues").innerHTML = issues.length ? issues.map((i) => drawSfIssue(i, isOpen(i))).join("") : "";
 }
 
-function drawSfIssue(i) {
+function drawSfIssue(i, opened) {
   const base = i.lines.filter((l) => l.kind === "base"), buy = i.lines.filter((l) => l.kind === "buy"), un = i.lines.filter((l) => l.kind === "unmatched");
   const left = (l) => Math.max(0, l.quantity_asked - l.quantity_packed);
   const toPack = base.filter((l) => left(l) > 0);
@@ -1359,9 +1371,9 @@ function drawSfIssue(i) {
   const state = !base.length ? "" : !toPack.length ? `<span style="color:var(--ok);font-weight:600">Packed</span>`
     : base.some((l) => l.quantity_packed > 0) ? "Part packed" : "To pack";
   const packedBy = (i.packs || []).map((p) => `${esc(p.by)}, ${new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`).join("; ");
-  return `<div class="sf-issue" data-sf-issue="${i.id}">
-    <h3>${topUp ? "Top-up" : i.resupply}${i.planned_on ? " · " + sfDate(i.planned_on) : ""}${state ? " · " + state : ""}</h3>
-    <div class="muted">${base.length} from Base stock · ${buy.length} bought for the trip${un.length ? ` · <span class="sf-short">${un.length} to match</span>` : ""}${short.length ? ` · <span class="sf-short">${short.length} short at Base</span>` : ""}${packedBy ? ` · packed by ${packedBy}` : ""}</div>
+  return `<details class="sf-issue" data-sf-issue="${i.id}"${opened || packing ? " open" : ""}>
+    <summary><h3>${topUp ? "Top-up" : i.resupply}${i.planned_on ? " · " + sfDate(i.planned_on) : ""}${state ? " · " + state : ""}</h3>
+    <div class="muted">${base.length} from Base stock · ${buy.length} bought for the trip${un.length ? ` · <span class="sf-short">${un.length} to match</span>` : ""}${short.length ? ` · <span class="sf-short">${short.length} short at Base</span>` : ""}${packedBy ? ` · packed by ${packedBy}` : ""}</div></summary>
     ${un.map((l) => `<div class="sf-unmatched"><b>${esc(l.list_text)}</b> · ${fmtQty(l.quantity_asked)} asked
         <div class="muted">This line isn't matched yet. Choose the Base item it comes from, or say it's bought for the trip. The answer is remembered.</div>
         <div class="pick"><select data-sf-item="${l.id}" aria-label="Base item">${sfItemOptions()}</select>
@@ -1398,7 +1410,7 @@ function drawSfIssue(i) {
       ${base.length || buy.length ? `<button type="button" class="secondary" data-sf-sheet="${i.id}">Packing sheet (Excel)</button>` : ""}
     </div>
     ${packing ? `<div class="hint">Confirming takes these quantities out of Base stock and charges them to ${esc(sfTrip.trip.code)}. Anything Base doesn't hold stays to pack later.</div>` : ""}
-  </div>`;
+  </details>`;
 }
 
 function sfItemOptions() {
@@ -1412,6 +1424,13 @@ function sfItemOptions() {
   return html + (group ? "</optgroup>" : "");
 }
 
+// Remember a resupply opened or closed by hand, so redrawing after a match or a
+// pack keeps it that way. Only a click counts: a details drawn open fires its
+// own toggle, which isn't a choice.
+$("sf-issues").addEventListener("click", (ev) => {
+  const sum = ev.target.closest(".sf-issue > summary");
+  if (sum) sfOpen.set(sum.parentElement.dataset.sfIssue, !sum.parentElement.open);
+});
 $("sf-issues").addEventListener("click", async (ev) => {
   const t = ev.target.closest("button");
   if (!t) return;
@@ -1577,6 +1596,12 @@ async function sfReadList(buf) {
       }
       if (typeof v === "string" && /^\s*R[123]\s*$/i.test(v) && (head === null || head === r)) { head = r; cols[v.trim().toUpperCase()] = c; }
     });
+  });
+  // A heading retyped by hand sometimes loses its R ("R1", "R2", "3"). In the
+  // heading row, after R1, a bare 1, 2 or 3 is taken as that R.
+  if (head) ws.getRow(head).eachCell((cell, c) => {
+    const m = /^\s*([123])\s*$/.exec(String(val(cell) ?? ""));
+    if (m && !cols["R" + m[1]] && cols.R1 && c > cols.R1) cols["R" + m[1]] = c;
   });
   if (!head || !cols.R1) throw new Error("This doesn't look like the shopping list template: no R1 heading was found.");
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
