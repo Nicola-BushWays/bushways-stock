@@ -298,7 +298,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-08e</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09a</p>
 </header>
 
 <main>
@@ -2177,11 +2177,14 @@ function drawLines() {
     const counted = l.handwritten_qty != null && l.handwritten_qty !== l.printed_qty
       ? `${l.printed_qty ?? "—"} <span class="hand" title="Written by hand on the invoice">✎ ${l.handwritten_qty}</span>`
       : (l.printed_qty ?? "—");
-    // In single units (D-018): a case of 6 counts as 6.
+    // In single units (D-018): a case of 6 counts as 6. An item counted by
+    // weight is in kg: 16 packs of 250g is 16 × 0.25 = 4 kg.
     const upp = Number(l.units_per_pack || 1);
     const units = Number(l.handwritten_qty ?? l.printed_qty ?? 0) * upp;
-    const qty = (upp > 1 ? `${counted} × ${upp}<div class="adj">= ${fmtQty(units)} units</div>` : counted)
-      + (!locked() && !l.reviewed_at ? `<div><button type="button" class="secondary small" data-line="${l.id}" data-decision="units">${upp > 1 ? "Change units" : "Units per pack"}</button></div>` : "");
+    const byWeight = item?.item_type === "variable_weight";
+    const qty = (byWeight && upp !== 1 ? `${counted} × ${fmtQty(upp)} kg<div class="adj">= ${fmtQty(units)} kg</div>`
+        : upp > 1 ? `${counted} × ${upp}<div class="adj">= ${fmtQty(units)} units</div>` : counted)
+      + (!locked() && !l.reviewed_at ? `<div><button type="button" class="secondary small" data-line="${l.id}" data-decision="units">${byWeight ? "Kg per pack" : upp > 1 ? "Change units" : "Units per pack"}</button></div>` : "");
     const unit = l.unit_price_excl != null ? `${money(l.unit_price_excl)} <span class="muted">excl</span>` : l.unit_price_incl != null ? `${money(l.unit_price_incl)} <span class="muted">incl</span>` : "—";
     const changed = l.reviewed_at && l.proposed_stock_item_id && l.proposed_stock_item_id !== l.matched_stock_item_id;
     return `<tr class="${isOpen(l) ? "open" : ""}">
@@ -2245,7 +2248,9 @@ $("lines").addEventListener("click", async (ev) => {
   if (decision === "choose") return openChoose(line);
   if (decision === "reallocate") return openRealloc(line);
   if (decision === "units") {
-    const v = prompt(`How many single units are in one of these?\n${line.raw_description}${line.raw_size ? " (" + line.raw_size + ")" : ""}\nA case of 6 is 6; a single item is 1.`, String(line.units_per_pack || 1));
+    const v = line.stock_items?.item_type === "variable_weight"
+      ? prompt(`How many kg is one of these? This item is counted in kg.\n${line.raw_description}${line.raw_size ? " (" + line.raw_size + ")" : ""}\nA 250g pack is 0.25; if the invoice already gives kg, 1.`, String(line.units_per_pack || 1))
+      : prompt(`How many single units are in one of these?\n${line.raw_description}${line.raw_size ? " (" + line.raw_size + ")" : ""}\nA case of 6 is 6; a single item is 1.`, String(line.units_per_pack || 1));
     if (v == null) return;
     try { render(await api("review_line", { body: { line_id: line.id, decision: "units", units_per_pack: v.trim() } })); }
     catch (e) { showError(e); }
@@ -2862,7 +2867,7 @@ const sourceText = (l) => (l.load_sheet_line_sources || []).map((s) => {
   const q = il.handwritten_qty ?? il.printed_qty;
   const gap = supplierGap(il);
   const upp = Number(il.units_per_pack || 1);
-  return `${esc(il.invoices?.supplier || "")} ${esc(il.invoices?.invoice_number || "")}: ${fmtQty(q ?? 0)}${il.handwritten_qty != null ? " ✎" : ""}${upp > 1 ? ` × ${upp} = ${fmtQty((q ?? 0) * upp)}` : ""}`
+  return `${esc(il.invoices?.supplier || "")} ${esc(il.invoices?.invoice_number || "")}: ${fmtQty(q ?? 0)}${il.handwritten_qty != null ? " ✎" : ""}${upp !== 1 ? ` × ${fmtQty(upp)} = ${fmtQty((q ?? 0) * upp)}` : ""}`
     + (gap < 0 ? ` <span class="short">supplier short ${fmtQty(-gap)} (invoiced ${fmtQty(il.printed_qty)})</span>` : "")
     + (gap > 0 ? ` <span class="short">supplier over ${fmtQty(gap)} (invoiced ${fmtQty(il.printed_qty)})</span>` : "");
 }).join("<br>");
