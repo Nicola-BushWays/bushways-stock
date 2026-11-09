@@ -133,6 +133,10 @@
   .sf-line .d { flex: 1; }
   .sf-line .n { min-width: 64px; text-align: right; }
   .sf-short { color: var(--bad); font-weight: 600; }
+  #credit-box .cn { border: 1px solid var(--sand); border-radius: 8px; padding: 10px 12px; margin-top: 12px; background: #fff; }
+  #credit-box .cn-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--offwhite); }
+  #credit-box .cn-line .d { flex: 1 1 200px; }
+  #credit-box button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
   table.sf-tbl { margin-top: 6px; font-size: 14px; width: auto; min-width: min(100%, 560px); }
   table.sf-tbl td:first-child { max-width: 360px; }
   table.sf-tbl th { text-align: left; font-size: 12px; font-weight: 600; color: #7a6e64; padding: 4px 6px; border-bottom: 1px solid var(--sand); }
@@ -313,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09f</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09g</p>
 </header>
 
 <main>
@@ -391,6 +395,7 @@
       <h2>2. What the tool read</h2>
       <div id="read-warnings"></div>
       <div class="summary" id="summary"></div>
+      <div id="credit-box"></div>
       <div class="actions" style="margin-top:10px">
         <button type="button" class="secondary small" id="edit-details">Correct invoice details</button>
         <button type="button" class="secondary small" id="discard-read">Discard this read</button>
@@ -1663,7 +1668,7 @@ async function openAllocate() {
     const row = (i, extra) => {
       const days = Math.floor((Date.now() - Date.parse(i.captured_at)) / 86400e3);
       return `<button type="button" class="secondary" data-al-open="${i.id}">
-        ${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
+        ${i.is_credit_note ? "<b>Credit note</b> · " : ""}${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
         <span class="muted"> · BWP ${money(i.total_incl ?? i.lines_total_incl)} · ${extra(i, days)}</span></button>`;
     };
     $("al-list").innerHTML = waiting.length ? waiting.map((i) => row(i, (i, d) =>
@@ -1970,7 +1975,7 @@ async function loadRecent() {
       const when = new Date(i.captured_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
       const state = i.status === "accepted" ? " · accepted" : i.matched_at ? " · to review" : " · not matched";
       return `<button type="button" class="secondary" data-open="${i.id}">
-        ${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
+        ${i.is_credit_note ? "<b>Credit note</b> · " : ""}${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
         <span class="muted"> · BWP ${money(i.total_incl)} · read ${when}${state}</span></button>`;
     }).join("");
   } catch (e) {
@@ -2175,8 +2180,83 @@ function render(data) {
   $("rematch").hidden = matched || locked();
   $("lines-help").hidden = locked();
   drawLines();
+  drawCreditBox();
   drawAcceptBar();
 }
+
+// --- Credit notes (D-032) -----------------------------------------------------
+// Nothing on a credit note goes into stock. Each stock line is "Already out of
+// stock" (put right when it was delivered short or damaged, the usual case)
+// unless marked "Take it out of stock now". It names the invoice it corrects.
+
+let creditCandidates = null; // { for: invoice id, invoices }
+const invLabel = (i) => `${i.supplier || "Unknown supplier"} · ${i.invoice_number || "no number"}${i.invoice_date ? " · " + new Date(i.invoice_date + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""} · BWP ${money(i.total_incl ?? i.lines_total_incl)}`;
+
+async function drawCreditBox() {
+  const inv = current.invoice;
+  const box = $("credit-box");
+  if (!inv.is_credit_note) {
+    const notes = current.credit_notes || [];
+    box.innerHTML = (notes.length ? `<div class="cn"><b>Credit notes against this invoice</b>
+      ${notes.map((n) => `<div class="cn-line"><span class="d">${esc(invLabel(n))}${n.status === "accepted" ? "" : " · not accepted yet"}</span>
+        <button type="button" class="secondary small" data-cn-open="${n.id}">Open it</button></div>`).join("")}</div>` : "")
+      + (locked() ? "" : `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400"><input type="checkbox" id="cn-tick"> This is a credit note</label>`);
+    return;
+  }
+  const stock = current.lines.filter((l) => l.matched_stock_item_id && ["matched", "confirmed"].includes(l.match_status));
+  const lineRow = (l) => {
+    const name = `${l.stock_items?.name || l.raw_description}${l.stock_items?.standard_size ? " · " + l.stock_items.standard_size : ""}`;
+    const qty = Math.abs(Number(l.printed_qty || 0)) * Number(l.units_per_pack || 1);
+    if (locked()) return `<div class="cn-line"><span class="d">${esc(name)} · ${fmtQty(qty)}</span><span class="muted">${l.credit_take_out ? "Taken out of stock" : "Already out of stock"}</span></div>`;
+    return `<div class="cn-line"><span class="d">${esc(name)} · ${fmtQty(qty)}</span>
+      <button type="button" class="secondary small" data-cn-line="${l.id}" data-take="0" aria-pressed="${!l.credit_take_out}">Already out of stock</button>
+      <button type="button" class="secondary small" data-cn-line="${l.id}" data-take="1" aria-pressed="${!!l.credit_take_out}">Take it out of stock now</button></div>`;
+  };
+  const cr = current.credits;
+  let pick = "";
+  if (locked()) pick = cr ? `<div style="margin-top:6px">Corrects <button type="button" class="secondary small" data-cn-open="${cr.id}">${esc(invLabel(cr))}</button></div>` : `<div class="muted" style="margin-top:6px">Not linked to an invoice.</div>`;
+  else {
+    if (creditCandidates?.for !== inv.id) {
+      creditCandidates = { for: inv.id, invoices: null };
+      api("credit_candidates", { query: `&id=${inv.id}` }).then((r) => { if (creditCandidates?.for === inv.id) { creditCandidates.invoices = r.invoices; drawCreditBox(); } }).catch(() => {});
+    }
+    const list = creditCandidates.invoices;
+    const opts = list ? list.filter((i) => !cr || i.id !== cr.id) : [];
+    pick = `<div style="margin-top:8px"><label for="cn-credits">Invoice it corrects</label>
+      <select id="cn-credits" style="width:100%"><option value="">${list ? "Choose the invoice…" : "Loading…"}</option>
+      ${cr ? `<option value="${cr.id}" selected>${esc(invLabel(cr))}</option>` : ""}
+      ${opts.map((i) => `<option value="${i.id}">${esc(invLabel(i))}${i.same_supplier ? "" : " (other supplier)"}</option>`).join("")}</select></div>`;
+  }
+  box.innerHTML = `<div class="cn"><b>Credit note</b>
+    <div class="muted">Nothing on a credit note goes into stock. It goes through Allocate to Dext like an invoice.</div>
+    ${pick}
+    ${stock.length ? `<div style="margin-top:10px"><b>Stock on it</b>
+      <div class="muted">Usually it's already out of stock: it was short or damaged when it arrived and put right then. Take it out now only if it came into stock and went back to the supplier without being recorded.</div>
+      ${stock.map(lineRow).join("")}</div>` : ""}
+    ${locked() ? "" : `<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-weight:400"><input type="checkbox" id="cn-tick" checked> This is a credit note</label>`}
+  </div>`;
+}
+
+$("credit-box").addEventListener("click", async (ev) => {
+  const o = ev.target.closest("[data-cn-open]");
+  if (o && !busy) {
+    clearError();
+    try { render(await api("invoice", { query: `&id=${o.dataset.cnOpen}` })); $("result").scrollIntoView({ behavior: "smooth" }); } catch (e) { showError(e); }
+    return;
+  }
+  const b = ev.target.closest("[data-cn-line]");
+  if (!b || busy) return;
+  clearError();
+  try { render(await api("credit_line", { body: { line_id: b.dataset.cnLine, take_out: b.dataset.take === "1" } })); } catch (e) { showError(e); }
+});
+$("credit-box").addEventListener("change", async (ev) => {
+  if (busy) return;
+  const body = ev.target.id === "cn-tick" ? { is_credit_note: ev.target.checked }
+    : ev.target.id === "cn-credits" ? { credits_invoice_id: ev.target.value || null } : null;
+  if (!body) return;
+  clearError();
+  try { render(await api("set_credit_note", { body: { invoice_id: current.invoice.id, ...body } })); } catch (e) { showError(e); drawCreditBox(); }
+});
 
 $("summary").addEventListener("click", async (ev) => {
   const b = ev.target.closest("[data-photo]");
@@ -2303,21 +2383,27 @@ function drawAcceptBar() {
   if (!inv.matched_at) { $("accept-bar").innerHTML = ""; return; }
   const left = current.needs_review_count;
   $("accept-bar").innerHTML = `
-    <button type="button" id="accept-invoice" ${left ? "disabled" : ""}>Accept invoice</button>
+    <button type="button" id="accept-invoice" ${left ? "disabled" : ""}>${inv.is_credit_note ? "Accept credit note" : "Accept invoice"}</button>
     <span class="${left ? "reason" : "muted"}">${left
       ? `${left} line${left > 1 ? "s" : ""} still need${left > 1 ? "" : "s"} a decision.`
+      : inv.is_credit_note ? "Every line is decided. Accepting locks the credit note. Nothing goes into stock; lines marked Take it out of stock now come out."
       : "Every line is decided. Accepting confirms the matched lines in your name and locks the invoice."}</span>`;
 }
 
 $("accept-bar").addEventListener("click", async (ev) => {
   if (ev.target.id !== "accept-invoice" || busy) return;
-  if (!confirm("Accept this invoice? Every line will be confirmed in your name and the invoice will be locked.")) return;
+  const cn = current.invoice.is_credit_note;
+  const out_ = cn ? current.lines.filter((l) => l.credit_take_out && l.matched_stock_item_id).length : 0;
+  if (!confirm(cn ? `Accept this credit note? It will be locked. Nothing goes into stock${out_ ? `, and ${out_} line${out_ > 1 ? "s" : ""} will come out of stock` : ""}.`
+    : "Accept this invoice? Every line will be confirmed in your name and the invoice will be locked.")) return;
   clearError();
   try {
     const out = await api("accept_invoice", { body: { invoice_id: current.invoice.id } });
     render(out);
     // Base and CEC: the invoice is the delivery note, so it is already in stock.
-    if (out.received_into?.length) {
+    if (cn) {
+      $("error").innerHTML = `<div class="notice">Credit note accepted. Nothing went into stock${out.credited_out ? `; ${out.credited_out} line${out.credited_out > 1 ? "s" : ""} taken out of stock` : ""}. It's on the Allocate tab for Dext.</div>`;
+    } else if (out.received_into?.length) {
       $("error").innerHTML = `<div class="notice">Accepted and straight into stock: ${out.received_into.map((r) => `${esc(r.location)} (load sheet ${r.load_sheet}, received and finished)`).join("; ")}. A wrong count can be corrected under Receiving.</div>`;
     }
     loadRecent();
