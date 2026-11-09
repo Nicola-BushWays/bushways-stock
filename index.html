@@ -313,7 +313,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09e</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09f</p>
 </header>
 
 <main>
@@ -1169,6 +1169,8 @@ const BASE_SIDE = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-394
 const RECEIVE_ALL_AT = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-3947-4f06-a42c-5291d3cb6597", "db83c66c-f559-4a47-ae4d-b70e912d5e4b"]);
 const MAX_SIDE = 2400; // the reader downsamples to a fixed budget anyway; this keeps the upload small for Maun bandwidth
 const SESSION_KEY = "camp_stock_session";
+const CAMP_KEY = "camp_stock_camp";     // localStorage: the camp last chosen for an invoice
+const PAGES_KEY = "camp_stock_pages";   // sessionStorage: invoice photos taken but not yet read
 
 const $ = (id) => document.getElementById(id);
 const photos = [];      // { dataUrl }
@@ -1228,8 +1230,14 @@ async function loadLocations() {
   const opts = locations.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
   $("si-location").innerHTML = `<option value="">Choose…</option>` + opts;
   $("ca-location").innerHTML = `<option value="">Choose…</option>` + opts;
+  // The camp chosen last on this phone, so a phone that reloads the page while
+  // its camera is open comes back to the same camp, not the first one (Nicola,
+  // 2026-11-09).
+  let last = null;
+  try { last = localStorage.getItem(CAMP_KEY); } catch {}
+  if (!locations.some((l) => l.id === last)) last = locations.find((l) => l.name === DEFAULT_CAMP)?.id;
   $("camp").innerHTML = locations.map((l) =>
-    `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+    `<option value="${l.id}" ${l.id === last ? "selected" : ""}>${esc(l.name)}</option>`).join("");
 }
 
 async function fillPeople(locationSelect, personSelect, placeholder) {
@@ -1294,7 +1302,7 @@ function startApp() {
   $("creator-add").hidden = !session.person.can_create_item;
   $("new-stock-item").hidden = !session.person.can_create_item;
   $("tab-allocate").hidden = !session.person.can_allocate;
-  ensureLocations().catch(() => showError(new Error(NO_CAMPS + " Reload the page to try again.")));
+  ensureLocations().then(restorePages).catch(() => showError(new Error(NO_CAMPS + " Reload the page to try again.")));
   loadRecent();
   loadCreators();
   showView("invoices");
@@ -2001,7 +2009,12 @@ function pickPhoto(fromCamera, multiple, onFiles) {
   input.type = "file"; input.accept = "image/*";
   if (fromCamera) input.setAttribute("capture", "environment");
   if (multiple) input.multiple = true;
-  input.onchange = () => { if (input.files.length) onFiles([...input.files]); };
+  // In the page, not loose: a phone can tidy away an input that belongs to
+  // nothing while its camera is open, and the photo taken then never arrives.
+  input.hidden = true;
+  document.body.appendChild(input);
+  input.onchange = () => { if (input.files.length) onFiles([...input.files]); input.remove(); };
+  input.oncancel = () => input.remove();
   input.click();
 }
 const photoButtons = (attrs, label = "photo") =>
@@ -2026,7 +2039,34 @@ function shrink(file) {
   });
 }
 
+// Keeps the pages taken so far, so a reload while the camera is open (phones
+// do this when short of memory) loses only the photo being taken. Too big to
+// keep is no worse than before.
+let pagesRestored = false; // nothing is kept or cleared until the kept pages are back
+function keepPages() {
+  if (!pagesRestored) return;
+  try {
+    if (photos.length) sessionStorage.setItem(PAGES_KEY, JSON.stringify({ camp: $("camp").value, pages: photos.map((p) => p.dataUrl) }));
+    else sessionStorage.removeItem(PAGES_KEY);
+  } catch { try { sessionStorage.removeItem(PAGES_KEY); } catch {} }
+}
+function restorePages() {
+  pagesRestored = true;
+  try {
+    const kept = JSON.parse(sessionStorage.getItem(PAGES_KEY) || "null");
+    if (!kept?.pages?.length || photos.length) return;
+    if ([...$("camp").options].some((o) => o.value === kept.camp)) $("camp").value = kept.camp;
+    for (const d of kept.pages) photos.push({ dataUrl: d });
+    drawPages();
+  } catch {}
+}
+$("camp").addEventListener("change", () => {
+  try { localStorage.setItem(CAMP_KEY, $("camp").value); } catch {}
+  keepPages();
+});
+
 function drawPages() {
+  keepPages();
   $("pages").innerHTML = photos.map((p, i) => `
     <div class="page">
       <img src="${p.dataUrl}" data-view="${i}" alt="Page ${i + 1}">
