@@ -298,7 +298,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09b</p>
 </header>
 
 <main>
@@ -2232,7 +2232,12 @@ $("accept-bar").addEventListener("click", async (ev) => {
   if (!confirm("Accept this invoice? Every line will be confirmed in your name and the invoice will be locked.")) return;
   clearError();
   try {
-    render(await api("accept_invoice", { body: { invoice_id: current.invoice.id } }));
+    const out = await api("accept_invoice", { body: { invoice_id: current.invoice.id } });
+    render(out);
+    // Base and CEC: the invoice is the delivery note, so it is already in stock.
+    if (out.received_into?.length) {
+      $("error").innerHTML = `<div class="notice">Accepted and straight into stock: ${out.received_into.map((r) => `${esc(r.location)} (load sheet ${r.load_sheet}, received and finished)`).join("; ")}. A wrong count can be corrected under Receiving.</div>`;
+    }
     loadRecent();
   } catch (e) { showError(e); }
 });
@@ -2741,8 +2746,25 @@ function drawWaiting() {
     ? `${n} accepted line${n > 1 ? "s" : ""} waiting for this camp.${draft ? ` They'll be added to draft load sheet ${draft.number}.` : ""}`
     : `Nothing waiting for this camp.${draft ? ` Draft load sheet ${draft.number} is open below.` : ""}`;
   $("ls-build").disabled = !n;
+  // Base, Safaris and CEC need no load sheet (D-031): their invoices go
+  // straight into stock. Anything still waiting was accepted before that.
+  const direct = RECEIVE_ON_ACCEPT_AT.has(loc);
+  if (direct && n) $("ls-waiting").innerHTML = `${n} accepted line${n > 1 ? "s" : ""} waiting. ${esc(locations.find((l) => l.id === loc)?.name || "This place")} needs no load sheet: its invoices go straight into stock when accepted. These were accepted before that.
+    <button type="button" id="ls-direct">Put them into stock now</button>`;
   drawPick();
 }
+const RECEIVE_ON_ACCEPT_AT = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-3947-4f06-a42c-5291d3cb6597", "db83c66c-f559-4a47-ae4d-b70e912d5e4b"]);
+$("ls-waiting").addEventListener("click", async (ev) => {
+  if (ev.target.id !== "ls-direct") return;
+  if (!confirm("Put every waiting line into stock now, as received in full? A wrong count can be corrected under Receiving afterwards.")) return;
+  ev.target.disabled = true; ev.target.textContent = "Putting into stock…";
+  try {
+    const out = await api("receive_waiting", { body: { location_id: $("ls-camp").value } });
+    pendingInfo = await api("load_sheet_pending");
+    drawWaiting(); loadRecentSheets();
+    $("ls-error").innerHTML = `<div class="notice">${out.invoices} invoice${out.invoices > 1 ? "s" : ""} put into stock: ${out.received_into.map((r) => `${esc(r.location)}, load sheet ${r.load_sheet}`).join("; ")}, received and finished.</div>`;
+  } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; drawWaiting(); }
+});
 
 // The tick-list (D-021): grouped by invoice; held-back lines start unticked.
 let pickData = [];
