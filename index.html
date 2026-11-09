@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09h</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09i</p>
 </header>
 
 <main>
@@ -2228,7 +2228,9 @@ function drawTripBox() {
         ${list.map((x) => `<option value="${x.departure_id}">${esc(tripLabel(x))}</option>`).join("")}</select>
       ${t ? `<div class="muted" style="margin-top:6px">On accepting, ${toTrip} line${toTrip === 1 ? " is" : "s are"} charged to ${esc(t.code)} and never go${toTrip === 1 ? "es" : ""} into Base stock.${toBase.length ? ` ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} go${toBase.length === 1 ? "es" : ""} into Base stock, as Base keeps ${toBase.length === 1 ? "it" : "them"} for trips.` : ""}</div>` : ""}`;
   }
-  box.innerHTML = `<div class="cn">${pick}</div>`;
+  const warn = !t && !locked() && current.not_kept_at_base?.length
+    ? `<div class="read-warning" style="margin-top:8px">⚠ ${esc(current.not_kept_at_base.join(", "))} ${current.not_kept_at_base.length === 1 ? "isn't" : "aren't"} on Base's stock list. If this invoice was bought for a safari, choose the trip above. Otherwise ${current.not_kept_at_base.length === 1 ? "it goes" : "they go"} into Base stock when you accept.</div>` : "";
+  box.innerHTML = `<div class="cn">${pick}${warn}</div>`;
 }
 $("trip-box").addEventListener("change", async (ev) => {
   if (ev.target.id !== "trip-pick" || busy) return;
@@ -2447,7 +2449,7 @@ $("accept-bar").addEventListener("click", async (ev) => {
   const cn = current.invoice.is_credit_note;
   const out_ = cn ? current.lines.filter((l) => l.credit_take_out && l.matched_stock_item_id).length : 0;
   if (!confirm(cn ? `Accept this credit note? It will be locked. Nothing goes into stock${out_ ? `, and ${out_} line${out_ > 1 ? "s" : ""} will come out of stock` : ""}.`
-    : "Accept this invoice? Every line will be confirmed in your name and the invoice will be locked.")) return;
+    : `${!current.trip && current.not_kept_at_base?.length ? `${current.not_kept_at_base.join(", ")} ${current.not_kept_at_base.length === 1 ? "isn't" : "aren't"} on Base's stock list and will go into Base stock. If this invoice was bought for a safari, press Cancel and choose the trip.\n\n` : ""}Accept this invoice? Every line will be confirmed in your name and the invoice will be locked.`)) return;
   clearError();
   try {
     const out = await api("accept_invoice", { body: { invoice_id: current.invoice.id } });
