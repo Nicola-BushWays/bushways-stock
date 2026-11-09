@@ -298,7 +298,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09c</p>
 </header>
 
 <main>
@@ -1552,10 +1552,11 @@ async function sfReadList(buf) {
   await wb.xlsx.load(buf);
   const ws = wb.worksheets[0];
   const val = (c) => { let v = c?.value; if (v && typeof v === "object") v = v.result ?? v.text ?? (v.richText ? v.richText.map((t) => t.text).join("") : v instanceof Date ? v : null); return v; };
-  let head = null, cols = {}, descCol = 3, code = null;
+  let head = null, cols = {}, descCol = 3, code = null, brand = null;
   ws.eachRow((row, r) => {
     row.eachCell((cell, c) => {
       const v = val(cell);
+      if (brand === null && typeof v === "string" && /BRAND\s*&\s*TYPE/i.test(v)) brand = r;
       if (typeof v === "string" && /^\s*TRIP CODE/i.test(v)) {
         descCol = c;
         const right = val(row.getCell(c + 1));
@@ -1574,9 +1575,12 @@ async function sfReadList(buf) {
       if (typeof v === "string") { const m = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/.exec(v.trim()); if (m) { const y = m[3].length === 2 ? "20" + m[3] : m[3]; dates[res] = `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`; break; } }
     }
   }
+  // The list starts under the first BRAND & TYPE heading. Anything above it is
+  // the sheet's header, where Ops type notes such as a guest's allergy.
+  const start = brand ?? head;
   const rows = [];
   ws.eachRow((row, r) => {
-    if (r <= head) return;
+    if (r <= start) return;
     const text = val(row.getCell(descCol));
     if (typeof text !== "string" || !text.trim()) return;
     // The labels above the list (CAMP ASSISTANT:, PAX:) and the dates beneath the
