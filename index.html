@@ -133,7 +133,7 @@
   .sf-line .d { flex: 1; }
   .sf-line .n { min-width: 64px; text-align: right; }
   .sf-short { color: var(--bad); font-weight: 600; }
-  #credit-box .cn { border: 1px solid var(--sand); border-radius: 8px; padding: 10px 12px; margin-top: 12px; background: #fff; }
+  #trip-box .cn, #credit-box .cn { border: 1px solid var(--sand); border-radius: 8px; padding: 10px 12px; margin-top: 12px; background: #fff; }
   #credit-box .cn-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--offwhite); }
   #credit-box .cn-line .d { flex: 1 1 200px; }
   #credit-box button[aria-pressed=true] { background: var(--bronze); border-color: var(--bronze); color: #fff; }
@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09g</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-09h</p>
 </header>
 
 <main>
@@ -396,6 +396,7 @@
       <div id="read-warnings"></div>
       <div class="summary" id="summary"></div>
       <div id="credit-box"></div>
+      <div id="trip-box"></div>
       <div class="actions" style="margin-top:10px">
         <button type="button" class="secondary small" id="edit-details">Correct invoice details</button>
         <button type="button" class="secondary small" id="discard-read">Discard this read</button>
@@ -546,6 +547,7 @@
       </div>
       <div id="sf-status"></div>
       <div id="sf-issues" style="margin-top:12px"></div>
+      <div id="sf-bought" style="margin-top:12px"></div>
     </section>
    </div>
 
@@ -1371,6 +1373,17 @@ function drawSafariTrip() {
   const isOpen = (i) => sfOpen.has(i.id) ? sfOpen.get(i.id)
     : sfPacking === i.id || i.lines.some((l) => l.kind === "unmatched") || i === first;
   $("sf-issues").innerHTML = issues.length ? issues.map((i) => drawSfIssue(i, isOpen(i))).join("") : "";
+  // Invoices bought for this trip (D-033): fresh goods charged straight to it.
+  const bought = sfTrip.bought || [];
+  const boughtTotal = bought.reduce((a, b) => a + (b.total_excl || 0), 0);
+  $("sf-bought").innerHTML = !bought.length ? "" : `<details class="sf-issue"${sfOpen.get("bought") ? " open" : ""} data-sf-issue="bought">
+    <summary><h3>Bought for the trip · BWP ${money(boughtTotal)} excl VAT</h3>
+      <div class="muted">${bought.length} invoice${bought.length === 1 ? "" : "s"} charged to ${esc(trip.code)}${bought.some((b) => !b.accepted) ? " · not yet accepted ones show what they will charge" : ""}</div></summary>
+    ${bought.map((b) => `<div style="margin-top:8px"><b>${esc(b.supplier || "Unknown supplier")} · ${esc(b.invoice_number || "no number")}</b>${b.invoice_date ? " · " + sfDate(b.invoice_date) : ""}${b.accepted ? "" : ` <span class="sf-short">not accepted yet</span>`}
+      <div class="table-wrap"><table class="sf-tbl"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Excl VAT</th></tr></thead><tbody>
+      ${b.lines.map((l) => `<tr><td>${esc(l.text)}</td><td class="num">${fmtQty(l.qty)}</td><td class="num">${l.excl == null ? "–" : money(l.excl)}</td></tr>`).join("")}
+      <tr><td><b>Total</b></td><td></td><td class="num"><b>${money(b.total_excl)}</b></td></tr></tbody></table></div></div>`).join("")}
+  </details>`;
 }
 
 function drawSfIssue(i, opened) {
@@ -1440,7 +1453,7 @@ function sfItemOptions() {
 // Remember a resupply opened or closed by hand, so redrawing after a match or a
 // pack keeps it that way. Only a click counts: a details drawn open fires its
 // own toggle, which isn't a choice.
-$("sf-issues").addEventListener("click", (ev) => {
+for (const id of ["sf-issues", "sf-bought"]) $(id).addEventListener("click", (ev) => {
   const sum = ev.target.closest(".sf-issue > summary");
   if (sum) sfOpen.set(sum.parentElement.dataset.sfIssue, !sum.parentElement.open);
 });
@@ -2181,8 +2194,47 @@ function render(data) {
   $("lines-help").hidden = locked();
   drawLines();
   drawCreditBox();
+  drawTripBox();
   drawAcceptBar();
 }
+
+// --- Invoices charged to a safari trip (D-033) ------------------------------------
+// A Base or Safaris invoice bought for one trip names it, read from the trip
+// code printed on it where there is one. On accepting, its lines are charged
+// to the trip and never go into Base stock, except items Base keeps for trips
+// (beef fillet, butter and the like), which go into Base stock as usual.
+
+let tripChoices = null; // the Safaris tab's trip list, once loaded
+
+function drawTripBox() {
+  const inv = current.invoice, box = $("trip-box");
+  if (!BASE_SIDE.has(inv.location_id) || inv.is_credit_note) { box.innerHTML = ""; return; }
+  const t = current.trip;
+  const kept = new Set(t?.kept || []);
+  const toBase = t ? current.lines.filter((l) => l.matched_stock_item_id && kept.has(l.matched_stock_item_id)) : [];
+  const toTrip = t ? current.lines.length - toBase.length : 0;
+  const tripLabel = (x) => `${x.code} · ${sfDate(x.start_date)}–${sfDate(x.end_date)}`;
+  let pick;
+  if (locked()) {
+    if (!t) { box.innerHTML = ""; return; }
+    const charged = current.lines.filter((l) => l.trip_charge).length;
+    pick = `<div>Bought for <b>${esc(t.code)}</b>: ${charged} line${charged === 1 ? "" : "s"} charged to the trip${toBase.length ? `; ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} into Base stock` : ""}.</div>`;
+  } else {
+    if (!tripChoices) api("safari_trips").then((r) => { tripChoices = r.trips; if (current?.invoice?.id === inv.id) drawTripBox(); }).catch(() => {});
+    const list = (tripChoices || []).filter((x) => !t || x.departure_id !== t.id);
+    pick = `<label for="trip-pick">Bought for a safari trip?</label>
+      <select id="trip-pick" style="width:100%"><option value="">${tripChoices ? "No, not for a trip" : "Loading trips…"}</option>
+        ${t ? `<option value="${t.id}" selected>${esc(tripLabel(t))}</option>` : ""}
+        ${list.map((x) => `<option value="${x.departure_id}">${esc(tripLabel(x))}</option>`).join("")}</select>
+      ${t ? `<div class="muted" style="margin-top:6px">On accepting, ${toTrip} line${toTrip === 1 ? " is" : "s are"} charged to ${esc(t.code)} and never go${toTrip === 1 ? "es" : ""} into Base stock.${toBase.length ? ` ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} go${toBase.length === 1 ? "es" : ""} into Base stock, as Base keeps ${toBase.length === 1 ? "it" : "them"} for trips.` : ""}</div>` : ""}`;
+  }
+  box.innerHTML = `<div class="cn">${pick}</div>`;
+}
+$("trip-box").addEventListener("change", async (ev) => {
+  if (ev.target.id !== "trip-pick" || busy) return;
+  clearError();
+  try { render(await api("set_invoice_trip", { body: { invoice_id: current.invoice.id, departure_id: ev.target.value || null } })); } catch (e) { showError(e); drawTripBox(); }
+});
 
 // --- Credit notes (D-032) -----------------------------------------------------
 // Nothing on a credit note goes into stock. Each stock line is "Already out of
@@ -2403,8 +2455,9 @@ $("accept-bar").addEventListener("click", async (ev) => {
     // Base and CEC: the invoice is the delivery note, so it is already in stock.
     if (cn) {
       $("error").innerHTML = `<div class="notice">Credit note accepted. Nothing went into stock${out.credited_out ? `; ${out.credited_out} line${out.credited_out > 1 ? "s" : ""} taken out of stock` : ""}. It's on the Allocate tab for Dext.</div>`;
-    } else if (out.received_into?.length) {
-      $("error").innerHTML = `<div class="notice">Accepted and straight into stock: ${out.received_into.map((r) => `${esc(r.location)} (load sheet ${r.load_sheet}, received and finished)`).join("; ")}. A wrong count can be corrected under Receiving.</div>`;
+    } else if (out.received_into?.length || out.charged_to_trip) {
+      const trip = out.charged_to_trip ? `${out.charged_to_trip.lines} line${out.charged_to_trip.lines === 1 ? "" : "s"} charged to ${esc(out.charged_to_trip.code)}. ` : "";
+      $("error").innerHTML = `<div class="notice">Accepted. ${trip}${out.received_into?.length ? `Straight into stock: ${out.received_into.map((r) => `${esc(r.location)} (load sheet ${r.load_sheet}, received and finished)`).join("; ")}. A wrong count can be corrected under Receiving.` : ""}</div>`;
     }
     loadRecent();
   } catch (e) { showError(e); }
