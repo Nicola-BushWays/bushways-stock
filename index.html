@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-15c</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-15d</p>
 </header>
 
 <main>
@@ -359,6 +359,7 @@
         <button type="button" class="secondary small" data-tab="transfers" aria-pressed="false">Transfers</button>
         <button type="button" class="secondary small" data-tab="sheet" aria-pressed="false">Stock sheets</button>
         <button type="button" class="secondary small" data-tab="take" aria-pressed="false">Stock take</button>
+        <button type="button" class="secondary small" data-tab="orders" aria-pressed="false">Orders</button>
         <button type="button" class="secondary small" data-tab="safaris" aria-pressed="false">Safaris</button>
         <button type="button" class="secondary small" data-tab="stock" aria-pressed="false">Stock list</button>
         <button type="button" class="secondary small" data-tab="allocate" aria-pressed="false" id="tab-allocate" hidden>Allocate</button>
@@ -523,6 +524,42 @@
    </div>
 
    <!-- Safaris: trips issued from Base stock (D-030) -->
+   <!-- Orders from a stock list (D-039) -->
+   <div id="view-orders" hidden>
+    <section class="card" id="or-list-card">
+      <h2>Orders</h2>
+      <p class="muted">Make an order from a stock list: a camp's order to Base, or Base's order from a supplier. Type how many of each item, with what's on hand shown beside it. Quantities are single units, as stock is counted.</p>
+      <div class="row">
+        <div><label for="or-kind">Kind of order</label><select id="or-kind"><option value="camp">Camp order to Base</option><option value="supplier">Order from a supplier</option></select></div>
+        <div><label for="or-camp">For</label><select id="or-camp"></select></div>
+        <div id="or-supplier-box" hidden><label for="or-supplier">Supplier</label><input type="text" id="or-supplier" placeholder="e.g. Lepopo"></div>
+        <div><label for="or-needed">Needed by</label><input type="date" id="or-needed"></div>
+        <div><button type="button" id="or-new">New order</button></div>
+      </div>
+      <div id="or-error"></div>
+      <div class="recent-list" id="or-list" style="margin-top:12px"><span class="muted">Loading…</span></div>
+    </section>
+    <section class="card" id="or-card" hidden>
+      <button type="button" class="secondary small" id="or-back">← All orders</button>
+      <h2 id="or-title" style="margin-top:10px"></h2>
+      <div class="muted" id="or-meta"></div>
+      <div class="row" id="or-edit" style="margin-top:10px">
+        <div id="or-ed-supplier-box"><label for="or-ed-supplier">Supplier</label><input type="text" id="or-ed-supplier"></div>
+        <div><label for="or-ed-needed">Needed by</label><input type="date" id="or-ed-needed"></div>
+        <div style="flex:2 1 240px"><label for="or-ed-note">Note</label><input type="text" id="or-ed-note" placeholder="Anything the supplier or Base should know"></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div><label for="or-sheet">Show</label><select id="or-sheet"></select></div>
+        <div style="flex:2 1 200px"><label for="or-search">Search</label><input type="search" id="or-search" placeholder="Item name"></div>
+        <div><label style="display:flex;gap:8px;align-items:center;margin-top:22px"><input type="checkbox" id="or-only" style="min-width:0"> Only what's ordered</label></div>
+      </div>
+      <div id="or-lines" style="margin-top:10px"></div>
+      <div class="accept-bar" id="or-bar"></div>
+      <div id="or-deliveries"></div>
+      <div id="or-status"></div>
+    </section>
+   </div>
+
    <div id="view-safaris" hidden>
     <section class="card" id="sf-list-card">
       <h2>Safaris</h2>
@@ -1327,6 +1364,208 @@ function startApp() {
   loadRecent();
   loadCreators();
   showView("invoices");
+}
+
+// --- Orders from a stock list (D-039) ------------------------------------------
+// A camp's order to Base, or Base's order from a supplier, made by typing
+// quantities beside a place's stock list. Saves as it's typed; a placed order
+// is locked and checked against the load sheets or invoices it came on.
+let orData = null, orSaveTimer = null;
+const orPending = new Map(); // stock_item_id → quantity typed, not yet saved
+const OR_KIND = { camp: "Camp order to Base", supplier: "Order from a supplier" };
+const OR_STATUS = { draft: "Draft", placed: "Placed", complete: "Complete" };
+
+async function openOrders() {
+  $("or-card").hidden = true; $("or-list-card").hidden = false;
+  $("or-error").innerHTML = "";
+  try {
+    await ensureLocations();
+    if (!$("or-camp").options.length) {
+      $("or-camp").innerHTML = locations.map((l) => `<option value="${l.id}" ${l.name === DEFAULT_CAMP ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+    }
+    const { orders } = await api("orders");
+    $("or-list").innerHTML = orders.length ? orders.map((o) => `<button type="button" class="secondary" data-or-open="${o.id}">
+        Order ${o.number} · ${esc(OR_KIND[o.kind])}${o.supplier ? " · " + esc(o.supplier) : ""} · ${esc(o.locations?.name || "")}
+        <span class="muted"> · ${o.stock_order_lines?.[0]?.count ?? 0} lines · ${OR_STATUS[o.status]}${o.needed_by ? " · needed " + sfDate(o.needed_by) : ""}</span></button>`).join("")
+      : `<span class="muted">No orders yet.</span>`;
+  } catch (e) { $("or-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+$("or-kind").addEventListener("change", () => {
+  const sup = $("or-kind").value === "supplier";
+  $("or-supplier-box").hidden = !sup;
+  // A supplier order is usually for Base's own stock; a camp's can still be chosen.
+  if (sup) $("or-camp").value = locations.find((l) => l.name === "Bush Ways Base")?.id || $("or-camp").value;
+});
+$("or-new").addEventListener("click", async (ev) => {
+  ev.target.disabled = true;
+  try {
+    orData = await api("create_order", { body: { kind: $("or-kind").value, location_id: $("or-camp").value, supplier: $("or-supplier").value, needed_by: $("or-needed").value } });
+    $("or-supplier").value = ""; $("or-needed").value = "";
+    showOrder();
+  } catch (e) { $("or-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { ev.target.disabled = false; }
+});
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest("[data-or-open]");
+  if (!b) return;
+  try { orData = await api("order", { query: `&id=${encodeURIComponent(b.dataset.orOpen)}` }); showOrder(); }
+  catch (e) { $("or-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+$("or-back").addEventListener("click", async () => { await orFlush(); openOrders(); });
+
+function showOrder() {
+  orPending.clear();
+  $("or-list-card").hidden = true; $("or-card").hidden = false;
+  $("or-status").innerHTML = "";
+  const sheets = [...new Set(orData.items.map((i) => i.sheet))];
+  $("or-sheet").innerHTML = `<option value="">Everything</option>` + sheets.map((sh) => `<option>${esc(sh)}</option>`).join("");
+  $("or-search").value = ""; $("or-only").checked = orData.order.status !== "draft";
+  window.scrollTo({ top: 0 });
+  drawOrder();
+}
+
+function drawOrder() {
+  const o = orData.order, draft = o.status === "draft";
+  $("or-title").textContent = `Order ${o.number} · ${OR_KIND[o.kind]} · ${o.location}`;
+  const n = orData.items.filter((i) => i.quantity > 0).length;
+  $("or-meta").textContent = [OR_STATUS[o.status], `${n} item${n === 1 ? "" : "s"} ordered`, o.supplier && `from ${o.supplier}`, o.needed_by && `needed ${sfDate(o.needed_by)}`,
+    `started by ${o.created_by}`, o.placed_at && `placed by ${o.placed_by}, ${new Date(o.placed_at).toLocaleDateString("en-GB")}`].filter(Boolean).join(" · ");
+  $("or-ed-supplier-box").hidden = o.kind !== "supplier";
+  $("or-ed-supplier").value = o.supplier || ""; $("or-ed-needed").value = o.needed_by || ""; $("or-ed-note").value = o.note || "";
+  for (const id of ["or-ed-supplier", "or-ed-needed", "or-ed-note"]) $(id).disabled = o.status === "complete";
+  drawOrderLines();
+  $("or-bar").innerHTML = (draft ? `<button type="button" data-or-do="placed">Place order</button><button type="button" class="secondary" data-or-do="discard">Discard</button>`
+    : o.status === "placed" ? `<button type="button" data-or-do="complete">Mark complete</button>${orData.deliveries.length ? "" : `<button type="button" class="secondary" data-or-do="draft">Back to draft</button>`}`
+    : `<button type="button" class="secondary" data-or-do="placed">Reopen</button>`)
+    + `<button type="button" class="secondary" data-or-do="excel">Download (Excel)</button><button type="button" class="secondary" data-or-do="print">Print / save as PDF</button>`;
+  // Checking against deliveries, once placed.
+  const checked = orData.deliveries.length;
+  $("or-deliveries").innerHTML = draft ? "" : `<h3 style="margin-top:14px">Check against delivery</h3>
+    <p class="muted">Tick the ${o.kind === "camp" ? "load sheet" : "invoice"} this order came on, and the list shows what arrived against what was ordered. More than one can be added.</p>
+    ${checked ? `<div>${orData.deliveries.map((d) => `<span style="display:inline-flex;gap:6px;align-items:center;margin:2px 6px 2px 0;border:1px solid var(--sand);border-radius:6px;padding:2px 8px">${esc(d.label)}${o.status === "placed" ? ` <button type="button" class="secondary small" data-or-unlink="${d.id}" aria-label="Remove">✕</button>` : ""}</span>`).join("")}</div>` : ""}
+    ${o.status === "placed" ? (orData.candidates.length ? `<div class="row" style="margin-top:8px"><div style="flex:2 1 260px"><select id="or-cand">${orData.candidates.map((c) => `<option value="${c.load_sheet_id || c.invoice_id}">${esc(c.label)}</option>`).join("")}</select></div>
+        <div><button type="button" class="secondary" id="or-link">Add this delivery</button></div></div>`
+      : `<div class="muted">No ${o.kind === "camp" ? "load sheets for this camp" : "accepted invoices for this place"} since a week before the order was placed.</div>`) : ""}`;
+}
+
+function drawOrderLines() {
+  const o = orData.order, draft = o.status === "draft", checked = orData.deliveries.length > 0;
+  const sheet = $("or-sheet").value, q = $("or-search").value.trim().toLowerCase(), only = $("or-only").checked;
+  const rows = orData.items.filter((i) => (!sheet || i.sheet === sheet) && (!q || i.name.toLowerCase().includes(q)) && (!only || i.quantity > 0));
+  let html = "", group = null;
+  for (const i of rows) {
+    const g = `${i.sheet} · ${i.category}`;
+    if (g !== group) { html += `<tr><td colspan="${checked ? 6 : 4}" class="st-group">${esc(g)}</td></tr>`; group = g; }
+    const short = checked && i.quantity > 0 ? i.quantity - (i.delivered || 0) : 0;
+    html += `<tr><td>${esc(i.name)}</td><td class="sz">${esc(i.size)}</td><td class="num muted">${fmtQty(i.on_hand)}</td>
+      <td class="num">${draft ? `<input type="number" inputmode="decimal" min="0" step="any" value="${i.quantity || ""}" data-or-qty="${i.id}" style="width:72px;min-width:0" aria-label="Order">` : i.quantity ? `<b>${fmtQty(i.quantity)}</b>` : `<span class="muted">–</span>`}</td>
+      ${checked ? `<td class="num">${i.delivered ? fmtQty(i.delivered) : `<span class="muted">–</span>`}</td><td class="num">${short > 0 ? `<span class="sf-short">${fmtQty(short)} short</span>` : i.quantity && short < 0 ? `<span class="muted">${fmtQty(-short)} over</span>` : i.quantity ? `<span style="color:var(--ok)">✓</span>` : ""}</td>` : ""}</tr>`;
+  }
+  $("or-lines").innerHTML = rows.length ? `<div class="table-wrap"><table class="sf-tbl"><thead><tr><th>Item</th><th class="sz">Size</th><th class="num">On hand</th><th class="num">${draft ? "Order" : "Ordered"}</th>${checked ? `<th class="num">Delivered</th><th class="num"></th>` : ""}</tr></thead><tbody>${html}</tbody></table></div>`
+    : `<p class="muted">${only ? "Nothing ordered yet." : "No items match."}</p>`;
+}
+for (const id of ["or-sheet", "or-only"]) $(id).addEventListener("change", drawOrderLines);
+$("or-search").addEventListener("input", drawOrderLines);
+
+// Quantities save about a second after typing stops.
+$("or-lines").addEventListener("input", (ev) => {
+  const inp = ev.target.closest("[data-or-qty]");
+  if (!inp) return;
+  const q = Math.max(0, Number(inp.value) || 0);
+  const it = orData.items.find((i) => i.id === inp.dataset.orQty);
+  if (it) it.quantity = q;
+  orPending.set(inp.dataset.orQty, q);
+  clearTimeout(orSaveTimer);
+  orSaveTimer = setTimeout(orFlush, 1000);
+  $("or-status").innerHTML = `<div class="muted">Saving…</div>`;
+});
+async function orFlush() {
+  clearTimeout(orSaveTimer);
+  if (!orPending.size || !orData) return;
+  const lines = [...orPending].map(([stock_item_id, quantity]) => ({ stock_item_id, quantity }));
+  orPending.clear();
+  try {
+    await api("save_order_lines", { body: { order_id: orData.order.id, lines } });
+    $("or-status").innerHTML = `<div class="muted">Saved.</div>`;
+    const n = orData.items.filter((i) => i.quantity > 0).length;
+    $("or-meta").textContent = $("or-meta").textContent.replace(/\d+ items? ordered/, `${n} item${n === 1 ? "" : "s"} ordered`);
+  } catch (e) {
+    for (const l of lines) if (!orPending.has(l.stock_item_id)) orPending.set(l.stock_item_id, l.quantity);
+    $("or-status").innerHTML = `<div class="error">Not saved: ${esc(e.message)}. It will try again when you type.</div>`;
+  }
+}
+for (const id of ["or-ed-supplier", "or-ed-needed", "or-ed-note"]) $(id).addEventListener("change", async () => {
+  try {
+    const keep = orData.items;
+    orData = await api("edit_order", { body: { order_id: orData.order.id, supplier: $("or-ed-supplier").value, needed_by: $("or-ed-needed").value, note: $("or-ed-note").value } });
+    orData.items = keep.map((i) => ({ ...i, ...(orData.items.find((x) => x.id === i.id) || {}), quantity: i.quantity }));
+    drawOrder();
+  } catch (e) { $("or-status").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+});
+
+$("or-card").addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  const say = (m) => { $("or-status").innerHTML = m ? `<div class="error">${esc(m)}</div>` : ""; };
+  const o = orData.order;
+  try {
+    if (t.dataset.orDo === "excel") { await orFlush(); return await orExcel(); }
+    if (t.dataset.orDo === "print") { await orFlush(); return orPrint(); }
+    if (t.dataset.orDo) {
+      const to = t.dataset.orDo;
+      if (to === "discard" && !confirm(`Discard order ${o.number}? It can't be brought back.`)) return;
+      if (to === "placed" && o.status === "draft" && !confirm(`Place order ${o.number}? It's then locked, ready to download or print.`)) return;
+      await orFlush();
+      const r = await api("order_status", { body: { order_id: o.id, to } });
+      if (r.discarded) return openOrders();
+      orData = r; showOrder(); return;
+    }
+    if (t.id === "or-link") {
+      const v = $("or-cand").value, body = { order_id: o.id };
+      body[o.kind === "camp" ? "load_sheet_id" : "invoice_id"] = v;
+      orData = await api("order_delivery", { body }); $("or-only").checked = true; drawOrder(); return;
+    }
+    if (t.dataset.orUnlink) { orData = await api("order_delivery", { body: { order_id: o.id, remove: t.dataset.orUnlink } }); drawOrder(); return; }
+  } catch (e) { say(e.message); }
+});
+
+const orHeading = () => {
+  const o = orData.order;
+  return [`Bush Ways · Order ${o.number}`, `${OR_KIND[o.kind]} · ${o.location}${o.supplier ? " · from " + o.supplier : ""}`,
+    [o.needed_by && `Needed by ${sfDate(o.needed_by)} ${o.needed_by.slice(0, 4)}`, o.placed_at ? `Placed ${new Date(o.placed_at).toLocaleDateString("en-GB")} by ${o.placed_by}` : "Draft, not placed yet"].filter(Boolean).join(" · "),
+    o.note || ""];
+};
+const orOrdered = () => orData.items.filter((i) => i.quantity > 0);
+async function orExcel() {
+  const o = orData.order, [h1, h2, h3, note] = orHeading();
+  await sfSaveWorkbook(`Order ${o.number} ${o.supplier || o.location}`, (wb) => {
+    const ws = wb.addWorksheet("Order", { pageSetup: { paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    ws.columns = [{ width: 38 }, { width: 12 }, { width: 22 }, { width: 10 }, { width: 10 }];
+    ws.addRow([h1]).font = { bold: true, size: 14 };
+    ws.addRow([h2]); ws.addRow([h3]); if (note) ws.addRow([note]).font = { italic: true };
+    ws.addRow([]);
+    sfHead(ws.addRow(["Item", "Size", "Category", "Quantity", "✓"]));
+    let group = null;
+    for (const i of orOrdered()) {
+      if (i.sheet !== group) { ws.addRow([i.sheet]).font = { bold: true }; group = i.sheet; }
+      ws.addRow([i.name, i.size, i.category, i.quantity, ""]);
+    }
+  });
+}
+function orPrint() {
+  const [h1, h2, h3, note] = orHeading();
+  let rows = "", group = null;
+  for (const i of orOrdered()) {
+    if (i.sheet !== group) { rows += `<tr><td colspan="4" style="font-weight:bold;padding-top:10px">${esc(i.sheet)}</td></tr>`; group = i.sheet; }
+    rows += `<tr><td>${esc(i.name)}</td><td>${esc(i.size)}</td><td style="text-align:right">${fmtQty(i.quantity)}</td><td style="width:40px;border-bottom:1px solid #999"></td></tr>`;
+  }
+  const w = window.open("", "_blank");
+  if (!w) return alert("Allow pop-ups for this page to print the order.");
+  w.document.write(`<!doctype html><meta charset="utf-8"><title>${esc(h1)}</title>
+    <style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px}h1{font-size:18px;margin:0 0 4px}table{border-collapse:collapse;width:100%;margin-top:12px}td,th{padding:4px 6px;border-bottom:1px solid #ddd;text-align:left}th{background:#e8e2d6}</style>
+    <h1>${esc(h1)}</h1><div>${esc(h2)}</div><div>${esc(h3)}</div>${note ? `<div><i>${esc(note)}</i></div>` : ""}
+    <table><thead><tr><th>Item</th><th>Size</th><th style="text-align:right">Quantity</th><th>✓</th></tr></thead><tbody>${rows}</tbody></table>`);
+  w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
 }
 
 // --- Safaris: trips issued from Base stock (docs/modules/safaris.md, D-030) ------
@@ -2249,6 +2488,7 @@ function showView(name) {
   $("view-take").hidden = name !== "take";
   $("view-allocate").hidden = name !== "allocate";
   $("view-safaris").hidden = name !== "safaris";
+  $("view-orders").hidden = name !== "orders";
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", b.dataset.tab === name));
   if (name === "loads") refreshLoads();
   if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
@@ -2259,6 +2499,7 @@ function showView(name) {
   if (name === "take") openStockTakes();
   if (name === "allocate") openAllocate();
   if (name === "safaris") openSafaris();
+  if (name === "orders") openOrders();
 }
 document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.tab)));
 
