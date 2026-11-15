@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-15a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-15b</p>
 </header>
 
 <main>
@@ -527,8 +527,15 @@
     <section class="card" id="sf-list-card">
       <h2>Safaris</h2>
       <p class="muted">Trips on the safari board with guests, from a month back to two months ahead. Upload a trip's shopping list and its R1, R2 and R3 become issue sheets from Base stock.</p>
-      <div class="actions"><button type="button" class="secondary" id="sf-short-open">Shortage list for the town driver</button></div>
+      <div class="actions"><button type="button" class="secondary" id="sf-short-open">Shortage list for the town driver</button>
+        <button type="button" class="secondary" id="sf-cost-open">Safari costs by type</button></div>
       <div id="sf-short" hidden style="margin-top:10px"></div>
+      <div class="row" id="sf-cost-box" hidden style="margin-top:10px">
+        <div><label for="sf-cost-from">Trips starting from</label><input type="date" id="sf-cost-from"></div>
+        <div><label for="sf-cost-to">to</label><input type="date" id="sf-cost-to"></div>
+        <div><button type="button" id="sf-cost-dl">Download (Excel)</button></div>
+      </div>
+      <div id="sf-cost-status"></div>
       <div class="recent-list" id="sf-list" style="margin-top:12px"><span class="muted">Loading…</span></div>
       <div id="sf-error"></div>
     </section>
@@ -548,6 +555,9 @@
       <div id="sf-status"></div>
       <div id="sf-issues" style="margin-top:12px"></div>
       <div id="sf-bought" style="margin-top:12px"></div>
+      <div id="sf-returns" style="margin-top:12px"></div>
+      <div class="accept-bar" id="sf-close-bar"></div>
+      <div id="sf-close-status"></div>
     </section>
    </div>
 
@@ -1388,6 +1398,225 @@ function drawSafariTrip() {
       ${b.lines.map((l) => `<tr><td>${esc(l.text)}</td><td class="num">${fmtQty(l.qty)}</td><td class="num">${l.excl == null ? "–" : money(l.excl)}</td></tr>`).join("")}
       <tr><td><b>Total</b></td><td></td><td class="num"><b>${money(b.total_excl)}</b></td></tr></tbody></table></div></div>`).join("")}
   </details>`;
+  drawSfReturns();
+  drawSfCloseBar();
+}
+
+// Returns from the trip (D-037): what came back fit for the shelf goes into
+// Base stock, credited at the cost it was packed or bought at. Items not on
+// the trip's list are added with + Add another item, at Base's average cost.
+let sfOther = []; // [{stock_item_id, name, size, quantity}] added by hand, not yet confirmed
+function drawSfReturns() {
+  const { trip, took = [], returns = [] } = sfTrip;
+  if (!trip.id || (!took.length && !returns.length && trip.status === "closed")) { $("sf-returns").innerHTML = ""; return; }
+  const open = trip.status !== "closed";
+  const anyLeft = took.some((t) => t.left > 0);
+  const isOpen = sfOpen.has("returns") ? sfOpen.get("returns") : sfOther.length > 0;
+  const backValue = returns.reduce((a, r) => a + r.lines.reduce((b, l) => b + l.quantity * (l.cost || 0), 0), 0);
+  // Keep what has been typed when the section is drawn again (adding an item).
+  const typed = new Map([...document.querySelectorAll("[data-sf-ret]")].filter((i) => i.value !== "").map((i) => [i.dataset.sfRet, i.value]));
+  $("sf-returns").innerHTML = `<details class="sf-issue" data-sf-issue="returns"${isOpen ? " open" : ""}>
+    <summary><h3>Returns from the trip${returns.length ? ` · BWP ${money(backValue)} back` : ""}</h3>
+      <div class="muted">${returns.length ? `Counted back ${returns.length} time${returns.length === 1 ? "" : "s"}, last by ${esc(returns[0].by)}, ${new Date(returns[0].at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : took.length ? "Nothing counted back yet" : "Nothing packed or bought yet"}</div></summary>
+    ${open ? `<p class="muted" style="margin:8px 0">When the trip is back, type how many of each came back fit to go on the shelf, and confirm. It goes into Base stock and is credited to ${esc(trip.code)} at the cost it was packed or bought at. Leave opened or spoiled goods out: they stay charged to the trip as used. This can be done in more than one go.</p>` : ""}
+    ${took.length ? `<div class="table-wrap"><table class="sf-tbl">
+      <thead><tr><th>Item</th><th class="sz">Size</th><th class="num">Took</th><th class="num">Back</th>${open ? `<th class="num">Back now</th>` : ""}</tr></thead>
+      <tbody>${took.map((t) => `<tr><td>${esc(t.item?.name || "")}</td><td class="sz">${esc(t.item?.standard_size || "")}</td>
+        <td class="num">${fmtQty(t.took)}</td><td class="num ${t.returned ? "" : "muted"}">${t.returned ? fmtQty(t.returned) : "–"}</td>
+        ${open ? `<td class="num">${t.left > 0 ? `<input type="number" inputmode="decimal" min="0" max="${t.left}" step="any" data-sf-ret="${t.stock_item_id}" value="${esc(typed.get(t.stock_item_id) ?? "")}" style="width:72px;min-width:0" aria-label="Back now">` : `<span class="muted">✓</span>`}</td>` : ""}</tr>`).join("")}
+      </tbody></table></div>` : ""}
+    ${sfOther.length ? `<div style="margin-top:8px"><b>Other items that came back</b> <span class="muted">· at Base's average cost</span>
+      <div class="table-wrap"><table class="sf-tbl"><thead><tr><th>Item</th><th class="sz">Size</th><th class="num">Back now</th><th class="x"></th></tr></thead><tbody>
+      ${sfOther.map((o, n) => `<tr><td>${esc(o.name)}</td><td class="sz">${esc(o.size)}</td><td class="num">${fmtQty(o.quantity)}</td>
+        <td class="x"><button type="button" class="secondary small" data-sf-other-x="${n}" aria-label="Remove">✕</button></td></tr>`).join("")}</tbody></table></div></div>` : ""}
+    ${open ? `<div class="pick row" style="margin-top:10px">
+        <div style="flex:1 1 220px"><label>+ Add another item</label><select id="sf-other-item">${sfItemOptions()}</select></div>
+        <div style="flex:0 0 90px"><label>How many</label><input type="number" inputmode="decimal" min="0" step="any" id="sf-other-qty" style="min-width:0;width:90px"></div>
+        <div><button type="button" class="secondary" id="sf-other-add">Add</button></div></div>
+      <div class="accept-bar">${anyLeft || sfOther.length ? `<button type="button" id="sf-ret-confirm">Confirm returned</button>` : ""}</div>` : ""}
+    ${returns.length ? `<details style="margin-top:8px"><summary class="muted">Counted back so far (${returns.length})</summary>
+      ${returns.map((r) => `<div style="margin-top:6px"><b>${esc(r.by)}</b>, ${new Date(r.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+        <div class="table-wrap"><table class="sf-tbl"><tbody>${r.lines.map((l) => `<tr><td>${esc(l.name)}${l.source === "other" ? ` <span class="muted">(not on the trip's list)</span>` : ""}</td><td class="sz">${esc(l.size)}</td><td class="num">${fmtQty(l.quantity)}</td><td class="num">${l.cost == null ? "–" : money(l.quantity * l.cost)}</td></tr>`).join("")}</tbody></table></div></div>`).join("")}
+    </details>` : ""}
+  </details>`;
+}
+
+// Close the trip, reopen it, and the cost report. Closing warns when a
+// resupply isn't fully packed or nothing has been counted back.
+function drawSfCloseBar() {
+  const { trip, issues, returns = [] } = sfTrip;
+  if (!trip.id) { $("sf-close-bar").innerHTML = ""; return; }
+  const closed = trip.status === "closed";
+  $("sf-close-bar").innerHTML = `${closed ? `<span class="muted">Closed ${trip.closed_at ? new Date(trip.closed_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : ""} · ${fmtQty(trip.closed_guest_nights ?? trip.guest_nights)} guest-nights</span>
+      <button type="button" class="secondary" id="sf-reopen">Reopen trip</button>`
+    : `<button type="button" class="secondary" id="sf-close">Close trip</button>`}
+    <button type="button" class="secondary" id="sf-report">Cost report (Excel)</button>`;
+}
+
+$("sf-returns").addEventListener("click", async (ev) => {
+  const sum = ev.target.closest(".sf-issue > summary");
+  if (sum) { sfOpen.set("returns", !sum.parentElement.open); return; }
+  const t = ev.target.closest("button");
+  if (!t) return;
+  const say = (m, ok) => { $("sf-status").innerHTML = m ? `<div class="${ok ? "notice" : "error"}">${esc(m)}</div>` : ""; };
+  if (t.id === "sf-other-add") {
+    const id = $("sf-other-item").value, q = Number($("sf-other-qty").value);
+    if (!id) return say("Choose the item first.");
+    if (!(q > 0)) return say("Enter how many came back.");
+    const it = (sfBaseItems || []).find((x) => x.id === id);
+    sfOther.push({ stock_item_id: id, name: it?.name || "", size: it?.standard_size || "", quantity: q });
+    sfOpen.set("returns", true);
+    say(""); drawSfReturns(); return;
+  }
+  if (t.dataset.sfOtherX) { sfOther.splice(Number(t.dataset.sfOtherX), 1); drawSfReturns(); return; }
+  if (t.id === "sf-ret-confirm") {
+    const inputs = [...document.querySelectorAll("[data-sf-ret]")];
+    const over = inputs.find((i) => Number(i.value) > Number(i.max));
+    if (over) return say("A quantity is more than the trip took, less what has come back already.");
+    const lines = inputs.filter((i) => Number(i.value) > 0).map((i) => ({ stock_item_id: i.dataset.sfRet, quantity: Number(i.value), source: "took" }))
+      .concat(sfOther.map((o) => ({ stock_item_id: o.stock_item_id, quantity: o.quantity, source: "other" })));
+    if (!lines.length) return say("Nothing to return: every quantity is 0.");
+    if (!confirm(`Put ${lines.length} item${lines.length === 1 ? "" : "s"} back into Base stock, credited to ${sfTrip.trip.code}?`)) return;
+    t.disabled = true; t.textContent = "Returning…";
+    try {
+      sfTrip = await api("return_from_trip", { body: { departure_id: sfTrip.trip.departure_id, lines } });
+      sfOther = [];
+      drawSafariTrip();
+      say(`Returned. That stock is back in Base and credited to ${sfTrip.trip.code}.`, true);
+    } catch (e) { say(e.message); t.disabled = false; t.textContent = "Confirm returned"; }
+  }
+});
+
+$("sf-close-bar").addEventListener("click", async (ev) => {
+  const t = ev.target.closest("button");
+  if (!t) return;
+  const say = (m, ok) => { $("sf-close-status").innerHTML = m ? `<div class="${ok ? "notice" : "error"}">${esc(m)}</div>` : ""; };
+  const trip = sfTrip.trip;
+  try {
+    if (t.id === "sf-close") {
+      const notPacked = sfTrip.issues.filter((i) => i.lines.some((l) => l.kind === "base" && l.quantity_asked > l.quantity_packed)).map((i) => i.resupply === "top-up" ? "a top-up" : i.resupply);
+      const warn = [notPacked.length ? `${notPacked.join(", ")} ${notPacked.length === 1 ? "isn't" : "aren't"} fully packed.` : "",
+        !(sfTrip.returns || []).length ? "No returns have been counted back." : ""].filter(Boolean).join(" ");
+      if (!confirm(`${warn ? warn + "\n\n" : ""}Close ${trip.code}? Nothing more can be packed, returned or charged to it, and its ${fmtQty(trip.guest_nights)} guest-nights are kept for the report. A Base manager can reopen it.`)) return;
+      sfTrip = await api("close_trip", { body: { departure_id: trip.departure_id } });
+      drawSafariTrip();
+      say(`${trip.code} is closed.`, true);
+    } else if (t.id === "sf-reopen") {
+      if (!confirm(`Reopen ${trip.code}? It can then be packed, returned and charged to again.`)) return;
+      sfTrip = await api("reopen_trip", { body: { departure_id: trip.departure_id } });
+      drawSafariTrip();
+      say(`${trip.code} is open again.`, true);
+    } else if (t.id === "sf-report") {
+      t.disabled = true;
+      try { await sfTripReport(await api("safari_trip_report", { query: `&departure_id=${encodeURIComponent(trip.departure_id)}` })); }
+      finally { t.disabled = false; }
+    }
+  } catch (e) { say(e.message); }
+});
+
+// Safari costs by type (D-037): every trip with a shopping list that started
+// in the dates chosen, its totals, subtotalled by safari type.
+$("sf-cost-open").addEventListener("click", () => {
+  const box = $("sf-cost-box");
+  box.hidden = !box.hidden;
+  if (!$("sf-cost-from").value) {
+    const now = new Date();
+    $("sf-cost-from").value = new Date(now.getFullYear(), now.getMonth() - 1, 1, 12).toISOString().slice(0, 10);
+    $("sf-cost-to").value = now.toISOString().slice(0, 10);
+  }
+});
+$("sf-cost-dl").addEventListener("click", async (ev) => {
+  const say = (m) => { $("sf-cost-status").innerHTML = m ? `<div class="error">${esc(m)}</div>` : ""; };
+  const from = $("sf-cost-from").value, to = $("sf-cost-to").value;
+  if (!from || !to) return say("Choose both dates.");
+  ev.target.disabled = true;
+  try {
+    const { trips } = await api("safari_cost_report", { query: `&from=${from}&to=${to}` });
+    if (!trips.length) return say("No trips with a shopping list started in those dates.");
+    say("");
+    await sfCostReport(trips, from, to);
+  } catch (e) { say(e.message); } finally { ev.target.disabled = false; }
+});
+async function sfCostReport(trips, from, to) {
+  const types = [...new Set(trips.map((t) => t.type))];
+  const add = (rows, k) => rows.reduce((a, t) => a + (Number(t[k]) || 0), 0);
+  const perGn = (net, gn) => gn ? Math.round(net / gn * 100) / 100 : null;
+  const pctBack = (back, packed) => packed ? back / packed : null;
+  await sfSaveWorkbook(`Safari costs by type ${from} to ${to}`, (wb) => {
+    const ws = wb.addWorksheet("By type", { pageSetup: { paperSize: 9, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    ws.columns = [{ width: 14 }, { width: 22 }, { width: 9 }, { width: 8 }, { width: 11 }, { width: 14 }, { width: 14 }, { width: 13 }, { width: 14 }, { width: 13 }, { width: 11 }];
+    ws.addRow([`Safari costs by type · trips starting ${sfDate(from)} ${from.slice(0, 4)} to ${sfDate(to)} ${to.slice(0, 4)}`]).font = { bold: true, size: 14 };
+    ws.addRow(["BWP excluding VAT. Open trips show their running cost. Returned % is returns as a share of what was packed."]).font = { italic: true, size: 9 };
+    ws.addRow([]);
+    sfHead(ws.addRow(["Trip", "Dates", "Status", "Guests", "Guest-nights", "Packed from Base", "Bought for trip", "Returned", "Net cost", "Per guest-night", "Returned %"]));
+    const line = (label, dates, status, rows, bold) => {
+      const r = ws.addRow([label, dates, status, add(rows, "guests"), add(rows, "guest_nights"), add(rows, "packed"), add(rows, "bought"), -add(rows, "returned"), add(rows, "net"),
+        perGn(add(rows, "net"), add(rows, "guest_nights")), pctBack(add(rows, "returned"), add(rows, "packed"))]);
+      if (bold) r.font = { bold: true };
+    };
+    for (const type of types) {
+      const rows = trips.filter((t) => t.type === type);
+      ws.addRow([type]).font = { bold: true, color: { argb: "FF122D31" } };
+      for (const t of rows) line(t.code, `${sfDate(t.start_date)}–${sfDate(t.end_date)}`, t.status, [t], false);
+      line(`${type} total`, `${rows.length} trip${rows.length === 1 ? "" : "s"}`, "", rows, true);
+      ws.addRow([]);
+    }
+    line("All trips", `${trips.length} trips`, "", trips, true);
+    for (const c of [6, 7, 8, 9, 10]) ws.getColumn(c).numFmt = SF_MONEY;
+    ws.getColumn(11).numFmt = "0%";
+    // Net cost by account for each type.
+    const wa = wb.addWorksheet("By account");
+    const accts = [...new Map(trips.flatMap((t) => t.accounts).map((a) => [a.code || "", a.name])).entries()].sort((a, b) => (a[0] || "9999").localeCompare(b[0] || "9999"));
+    wa.columns = [{ width: 22 }, ...accts.map(() => ({ width: 15 })), { width: 14 }];
+    sfHead(wa.addRow(["Safari type", ...accts.map(([code, name]) => code ? `${code} ${name}` : name), "Net cost"]));
+    for (const type of types) {
+      const rows = trips.filter((t) => t.type === type);
+      const net = (code) => rows.reduce((a, t) => a + t.accounts.filter((x) => (x.code || "") === code).reduce((b, x) => b + x.net, 0), 0);
+      wa.addRow([type, ...accts.map(([code]) => net(code)), add(rows, "net")]);
+    }
+    for (let c = 2; c <= accts.length + 2; c++) wa.getColumn(c).numFmt = SF_MONEY;
+  });
+}
+
+// Save a workbook built by fill(wb).
+async function sfSaveWorkbook(name, fill) {
+  await loadExcelJs();
+  const wb = new ExcelJS.Workbook();
+  fill(wb);
+  const blob = new Blob([await wb.xlsx.writeBuffer()], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name.replace(/[\\/:*?"<>|]+/g, " ") + ".xlsx";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+const SF_MONEY = "#,##0.00";
+const sfHead = (row) => { row.font = { bold: true }; row.eachCell((c) => { c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8E2D6" } }; }); };
+
+// One trip's cost report: by Safari Trails account, then every line.
+async function sfTripReport(r) {
+  const t = r.trip;
+  await sfSaveWorkbook(`${t.code} cost report`, (wb) => {
+    const ws = wb.addWorksheet("Summary", { pageSetup: { paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    ws.columns = [{ width: 12 }, { width: 26 }, { width: 16 }, { width: 18 }, { width: 14 }, { width: 14 }];
+    ws.addRow([`${t.code} · ${t.type}`]).font = { bold: true, size: 14 };
+    ws.addRow([`${sfDate(t.start_date)} to ${sfDate(t.end_date)} ${t.end_date.slice(0, 4)} · ${t.guests} guests · ${fmtQty(t.status === "closed" && t.closed_guest_nights != null ? t.closed_guest_nights : t.guest_nights)} guest-nights · ${t.status === "closed" ? "closed" : "open, a running cost"}`]);
+    ws.addRow(["Amounts in BWP excluding VAT. Packed and returned at the cost packed; bought as allocated on its invoice."]).font = { italic: true, size: 9 };
+    ws.addRow([]);
+    sfHead(ws.addRow(["Code", "Account", "Packed from Base", "Bought for the trip", "Returned", "Net cost"]));
+    for (const a of r.accounts) ws.addRow([a.code || "", a.name, a.packed, a.bought, -a.returned, a.net]);
+    const tot = ws.addRow(["", "Total", r.totals.packed, r.totals.bought, -r.totals.returned, r.totals.net]);
+    tot.font = { bold: true };
+    ws.addRow([]);
+    ws.addRow(["", "Cost per guest-night", null, null, null, r.per_guest_night]).font = { bold: true };
+    ws.getColumn(3).numFmt = ws.getColumn(4).numFmt = ws.getColumn(5).numFmt = ws.getColumn(6).numFmt = SF_MONEY;
+    const wl = wb.addWorksheet("Lines");
+    wl.columns = [{ header: "Kind", width: 10 }, { header: "From", width: 26 }, { header: "Date", width: 12 }, { header: "Item", width: 34 }, { header: "Size", width: 10 },
+      { header: "Qty", width: 8 }, { header: "Unit cost", width: 11 }, { header: "Value", width: 12 }, { header: "Account", width: 22 }];
+    sfHead(wl.getRow(1));
+    for (const l of r.lines) wl.addRow([l.kind, l.what, l.on ? String(l.on).slice(0, 10) : "", l.item || "", l.size || "", l.quantity, l.unit_cost, l.value,
+      l.code ? `${l.code} ${r.accounts.find((a) => a.code === l.code)?.name || ""}` : "Not yet allocated"]);
+    wl.getColumn(7).numFmt = wl.getColumn(8).numFmt = SF_MONEY;
+  });
 }
 
 function drawSfIssue(i, opened) {
@@ -4088,7 +4317,7 @@ $("tfa-list").addEventListener("click", async (ev) => {
 // --- The monthly stock sheet --------------------------------------------------------
 
 let ssData = null, ssTab = null;
-const SS_REASON = { receipt: "Delivery", correction: "Correction", extra: "Not on a load sheet", return_out: "Returned to Maun", return_in: "Return into Base stock", transfer_in: "Transfer in", transfer_out: "Transfer out", adjustment: "Adjustment", stock_take: "Stock take" };
+const SS_REASON = { receipt: "Delivery", correction: "Correction", extra: "Not on a load sheet", return_out: "Returned to Maun", return_in: "Return into Base stock", transfer_in: "Transfer in", transfer_out: "Transfer out", adjustment: "Adjustment", stock_take: "Stock take", opening: "Opening stock", issue: "Packed for a safari", credit: "Credit note", trip_return: "Back from a safari" };
 async function openStockSheet() {
   $("ss-error").innerHTML = "";
   try {
