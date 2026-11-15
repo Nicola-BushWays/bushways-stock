@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-15b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-15c</p>
 </header>
 
 <main>
@@ -1392,15 +1392,64 @@ function drawSafariTrip() {
   const boughtTotal = bought.reduce((a, b) => a + (b.total_excl || 0), 0);
   $("sf-bought").innerHTML = !bought.length ? "" : `<details class="sf-issue"${sfOpen.get("bought") ? " open" : ""} data-sf-issue="bought">
     <summary><h3>Bought for the trip · BWP ${money(boughtTotal)} excl VAT</h3>
-      <div class="muted">${bought.length} invoice${bought.length === 1 ? "" : "s"} charged to ${esc(trip.code)}${bought.some((b) => !b.accepted) ? " · not yet accepted ones show what they will charge" : ""}</div></summary>
+      <div class="muted">${bought.length} invoice${bought.length === 1 ? "" : "s"} charged to ${esc(trip.code)}${bought.some((b) => !b.accepted) ? " · not yet accepted ones show what they will charge" : ""}${(() => { const n = bought.reduce((a, b) => a + b.lines.filter((l) => !l.match).length, 0); return n ? ` · <span class="sf-short">${n} line${n === 1 ? "" : "s"} to tick off against the list</span>` : ""; })()}</div></summary>
     ${bought.map((b) => `<div style="margin-top:8px"><b>${esc(b.supplier || "Unknown supplier")} · ${esc(b.invoice_number || "no number")}</b>${b.invoice_date ? " · " + sfDate(b.invoice_date) : ""}${b.accepted ? "" : ` <span class="sf-short">not accepted yet</span>`}
-      <div class="table-wrap"><table class="sf-tbl"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Excl VAT</th></tr></thead><tbody>
-      ${b.lines.map((l) => `<tr><td>${esc(l.text)}</td><td class="num">${fmtQty(l.qty)}</td><td class="num">${l.excl == null ? "–" : money(l.excl)}</td></tr>`).join("")}
-      <tr><td><b>Total</b></td><td></td><td class="num"><b>${money(b.total_excl)}</b></td></tr></tbody></table></div></div>`).join("")}
+      <div class="table-wrap"><table class="sf-tbl"><thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Excl VAT</th><th>On the shopping list as</th></tr></thead><tbody>
+      ${b.lines.map((l) => `<tr><td>${esc(l.text)}</td><td class="num">${fmtQty(l.qty)}</td><td class="num">${l.excl == null ? "–" : money(l.excl)}</td>
+        <td>${sfBuyPick(l)}</td></tr>`).join("")}
+      <tr><td><b>Total</b></td><td></td><td class="num"><b>${money(b.total_excl)}</b></td><td>${b.lines.some((l) => !l.match && l.suggestion) && trip.status !== "closed" ? `<button type="button" class="secondary small" data-sf-buy-confirm="${b.id}">Confirm the suggestions</button>` : ""}</td></tr></tbody></table></div></div>`).join("")}
   </details>`;
   drawSfReturns();
   drawSfCloseBar();
 }
+
+// Ticking an invoice line off against the shopping list (D-038). The choice
+// is the resupply and list key; a person's choice is remembered for that
+// supplier wording. A suggestion from the words shows amber until confirmed.
+function sfBuyOptions() {
+  let html = "";
+  for (const i of sfTrip.issues) {
+    const buy = i.lines.filter((l) => l.kind === "buy");
+    if (!buy.length) continue;
+    const r = i.resupply === "top-up" ? i.id : i.resupply;
+    html += `<optgroup label="${esc(i.resupply === "top-up" ? "Top-up" : i.resupply)}${i.planned_on ? " · " + sfDate(i.planned_on) : ""}">`
+      + buy.map((l) => `<option value="${esc(r + "|" + l.list_key)}">${esc(l.list_text)} · ${fmtQty(l.quantity_asked)}</option>`).join("") + "</optgroup>";
+  }
+  return html;
+}
+function sfBuyPick(l) {
+  const m = l.match, sug = !m && l.suggestion;
+  const val = m ? (m.extra ? "extra" : m.resupply + "|" + m.key) : sug ? sug.resupply + "|" + sug.key : "";
+  const closed = sfTrip.trip.status === "closed";
+  const note = m?.gone ? `<span class="sf-short">not on the latest list</span>` : sug ? `<span style="color:#9a6a00">suggested</span>` : !m ? `<span class="sf-short">choose</span>` : m.source === "remembered" ? `<span class="muted">remembered</span>` : "";
+  return `<select data-sf-buy="${l.id}" ${closed ? "disabled" : ""} style="max-width:260px;min-width:0" aria-label="On the shopping list as">
+      <option value="">Choose…</option>${sfBuyOptions()}<option value="extra">Not on the list</option></select> ${note}`.replace(`value="${esc(val)}"`, `value="${esc(val)}" selected`);
+}
+async function sfSaveBuy(lineId, val) {
+  const body = { invoice_line_id: lineId };
+  if (!val) body.clear = true;
+  else if (val === "extra") body.extra = true;
+  else { const n = val.indexOf("|"); body.resupply = val.slice(0, n); body.key = val.slice(n + 1); }
+  return api("match_buy_line", { body });
+}
+$("sf-bought").addEventListener("change", async (ev) => {
+  const sel = ev.target.closest("[data-sf-buy]");
+  if (!sel) return;
+  try { sfTrip = await sfSaveBuy(sel.dataset.sfBuy, sel.value); $("sf-status").innerHTML = ""; }
+  catch (e) { $("sf-status").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  drawSafariTrip();
+});
+$("sf-bought").addEventListener("click", async (ev) => {
+  const t = ev.target.closest("[data-sf-buy-confirm]");
+  if (!t) return;
+  const inv = (sfTrip.bought || []).find((b) => b.id === t.dataset.sfBuyConfirm);
+  t.disabled = true;
+  try {
+    for (const l of inv.lines.filter((x) => !x.match && x.suggestion)) sfTrip = await sfSaveBuy(l.id, l.suggestion.resupply + "|" + l.suggestion.key);
+    $("sf-status").innerHTML = "";
+  } catch (e) { $("sf-status").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  drawSafariTrip();
+});
 
 // Returns from the trip (D-037): what came back fit for the shelf goes into
 // Base stock, credited at the cost it was packed or bought at. Items not on
@@ -1624,6 +1673,7 @@ function drawSfIssue(i, opened) {
   const left = (l) => Math.max(0, l.quantity_asked - l.quantity_packed);
   const toPack = base.filter((l) => left(l) > 0);
   const short = toPack.filter((l) => l.base_holds < left(l));
+  const toBuy = buy.filter((l) => !(l.bought || []).length);
   const topUp = i.resupply === "top-up";
   const open = sfTrip.trip.status !== "closed";
   const packing = sfPacking === i.id;
@@ -1632,7 +1682,7 @@ function drawSfIssue(i, opened) {
   const packedBy = (i.packs || []).map((p) => `${esc(p.by)}, ${new Date(p.at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`).join("; ");
   return `<details class="sf-issue" data-sf-issue="${i.id}"${opened || packing ? " open" : ""}>
     <summary><h3>${topUp ? "Top-up" : i.resupply}${i.planned_on ? " · " + sfDate(i.planned_on) : ""}${state ? " · " + state : ""}</h3>
-    <div class="muted">${base.length} from Base stock · ${buy.length} bought for the trip${un.length ? ` · <span class="sf-short">${un.length} to match</span>` : ""}${short.length ? ` · <span class="sf-short">${short.length} short at Base</span>` : ""}${packedBy ? ` · packed by ${packedBy}` : ""}</div></summary>
+    <div class="muted">${base.length} from Base stock · ${buy.length} bought for the trip${toBuy.length ? ` · <span class="sf-short">${toBuy.length} still to buy</span>` : ""}${un.length ? ` · <span class="sf-short">${un.length} to match</span>` : ""}${short.length ? ` · <span class="sf-short">${short.length} short at Base</span>` : ""}${packedBy ? ` · packed by ${packedBy}` : ""}</div></summary>
     ${un.map((l) => `<div class="sf-unmatched"><b>${esc(l.list_text)}</b> · ${fmtQty(l.quantity_asked)} asked
         <div class="muted">This line isn't matched yet. Choose the Base item it comes from, or say it's bought for the trip. The answer is remembered.</div>
         <div class="pick"><select data-sf-item="${l.id}" aria-label="Base item">${sfItemOptions()}</select>
@@ -1654,9 +1704,10 @@ function drawSfIssue(i, opened) {
         ${topUp && open ? `<td class="x">${!l.quantity_packed ? `<button type="button" class="secondary small" data-sf-remove="${l.id}" aria-label="Remove">✕</button>` : ""}</td>` : ""}</tr>
         ${packing && need > can ? `<tr class="sf-warn"><td colspan="${topUp && open ? 6 : 5}"><span class="hint bad">Base holds ${fmtQty(Math.max(0, l.base_holds))}: ${fmtQty(need - can)} short, on the shortage list</span></td></tr>` : ""}`;
     }).join("")}</tbody></table></div>` : ""}
-    ${buy.length ? `<details style="margin-top:8px"><summary class="muted">Bought for the trip (${buy.length})</summary>
-      <div class="table-wrap"><table class="sf-tbl"><thead><tr><th>Item</th><th class="num">Asked</th>${topUp && open ? `<th class="x"></th>` : ""}</tr></thead><tbody>
+    ${buy.length ? `<details style="margin-top:8px"${toBuy.length && toBuy.length < buy.length ? " open" : ""}><summary class="muted">Bought for the trip · ${buy.length - toBuy.length} of ${buy.length} bought</summary>
+      <div class="table-wrap"><table class="sf-tbl"><thead><tr><th>Item</th><th class="num">Asked</th><th>Bought</th>${topUp && open ? `<th class="x"></th>` : ""}</tr></thead><tbody>
       ${buy.map((l) => `<tr><td>${esc(l.list_text)}</td><td class="num"><b>${fmtQty(l.quantity_asked)}</b></td>
+        <td>${(l.bought || []).length ? `<span style="color:var(--ok);font-weight:600">✓</span> ${l.bought.map((x) => `${esc(x.supplier)}: ${fmtQty(x.qty)} × ${esc(x.text)}${x.size ? " " + esc(x.size) : ""}`).join("; ")}` : `<span class="sf-short">Still to buy</span>`}</td>
         ${topUp && open ? `<td class="x"><button type="button" class="secondary small" data-sf-remove="${l.id}" aria-label="Remove">✕</button></td>` : ""}</tr>`).join("")}</tbody></table></div></details>` : ""}
     ${topUp && open ? `<div class="pick row" style="margin-top:10px">
         <div style="flex:1 1 220px"><label>Add a line</label><select data-sf-add-item="${i.id}">${sfItemOptions().replace("Choose a Base item…", "A Base item…")}</select></div>
