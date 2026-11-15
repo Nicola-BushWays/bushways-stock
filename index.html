@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-09i</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-15a</p>
 </header>
 
 <main>
@@ -1186,6 +1186,10 @@ let filter = "all";
 let busy = false;
 let session = null;     // { token, person: { id, name, can_create_item } }
 let locations = [];
+// Bush Ways Safaris is a staffing place, not a stock one: Base holds the
+// stock and issues it to each trip (D-036). It stays in the people boxes
+// (signing in, adding a creator), and is left out of every stock box.
+const SAFARIS_ID = "2c94c415-3947-4f06-a42c-5291d3cb6597";
 let catalogue = null;   // loaded the first time Change or Create opens
 let activeLine = null;  // the line a modal is open for
 
@@ -1233,8 +1237,8 @@ async function loadLocations() {
       await new Promise((r) => setTimeout(r, attempt * 1000));
     }
   }
-  locations = data.locations;
-  const opts = locations.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  const opts = data.locations.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
+  locations = data.locations.filter((l) => l.id !== SAFARIS_ID);
   $("si-location").innerHTML = `<option value="">Choose…</option>` + opts;
   $("ca-location").innerHTML = `<option value="">Choose…</option>` + opts;
   // The camp chosen last on this phone, so a phone that reloads the page while
