@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-15d</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-16a</p>
 </header>
 
 <main>
@@ -1360,10 +1360,18 @@ function startApp() {
   $("creator-add").hidden = !session.person.can_create_item;
   $("new-stock-item").hidden = !session.person.can_create_item;
   $("tab-allocate").hidden = !session.person.can_allocate;
+  // Each tab shows only for someone with a Stock tick for it (D-040).
+  const acc = session.person.access || {};
+  const has = (...fns) => fns.some((f) => acc[f]);
+  const TAB_FNS = { invoices: ["invoices"], loads: ["load_sheets"], receive: ["receiving", "correct_delivery"], returns: ["returns", "decide_returns"],
+    transfers: ["transfers"], sheet: ["sheets"], take: ["stock_take", "approve_count"], orders: ["orders"], safaris: ["safaris"], stock: ["stock_list", "on_hand"] };
+  for (const [tab, fns] of Object.entries(TAB_FNS)) document.querySelector(`[data-tab="${tab}"]`).hidden = !has(...fns);
   ensureLocations().then(restorePages).catch(() => showError(new Error(NO_CAMPS + " Reload the page to try again.")));
-  loadRecent();
-  loadCreators();
-  showView("invoices");
+  if (has("invoices")) loadRecent();
+  if (has("stock_list")) loadCreators();
+  const first = [...document.querySelectorAll("[data-tab]")].find((b) => !b.hidden);
+  if (first) showView(first.dataset.tab);
+  else showError(new Error("You haven't been given any part of Stock yet. Ask Nicola to tick it on your staff profile."));
 }
 
 // --- Orders from a stock list (D-039) ------------------------------------------
