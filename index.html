@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-16a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-17a</p>
 </header>
 
 <main>
@@ -4113,7 +4113,7 @@ async function loadReturns() {
   try {
     await ensureLocations();
     returnsInfo = await api("returns");
-    const camps = returnsInfo.everywhere || returnsInfo.can_office ? locations : locations.filter((l) => l.id === returnsInfo.home_location_id);
+    const camps = returnsInfo.everywhere ? locations : locations.filter((l) => (returnsInfo.camps || [returnsInfo.home_location_id]).includes(l.id));
     const was = $("rt-camp").value;
     $("rt-camp").innerHTML = camps.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
     $("rt-camp").value = was && camps.some((l) => l.id === was) ? was : (camps.find((l) => l.name === DEFAULT_CAMP) || camps[0] || {}).id || "";
@@ -4357,7 +4357,7 @@ function drawRtPrint(data) {
 let tfInfo = { transfers: [], can_office: false, everywhere: false, home_location_id: null };
 let tfSheet = null, tfOnHand = [], tfPick = null, tfCorrecting = null;
 const tfPhotos = new Map();
-const tfAt = (loc) => tfInfo.everywhere || tfInfo.home_location_id === loc;
+const tfAt = (loc) => tfInfo.everywhere || (tfInfo.camps || [tfInfo.home_location_id]).includes(loc);
 const tfProblem = (msg) => {
   $("tf-action-error").innerHTML = msg ? `<div class="error">${esc(msg)}</div>` : "";
   if (msg) $("tf-action-error").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -4367,7 +4367,7 @@ async function loadTransfers() {
   try {
     await ensureLocations();
     tfInfo = await api("transfers");
-    const senders = tfInfo.everywhere ? locations : locations.filter((l) => l.id === tfInfo.home_location_id);
+    const senders = tfInfo.everywhere ? locations : locations.filter((l) => tfAt(l.id));
     const was = $("tf-from").value;
     $("tf-from").innerHTML = senders.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
     $("tf-from").value = was && senders.some((l) => l.id === was) ? was : (senders.find((l) => l.name === DEFAULT_CAMP) || senders[0] || {}).id || "";
