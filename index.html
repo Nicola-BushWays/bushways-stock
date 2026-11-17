@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-17a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-17b</p>
 </header>
 
 <main>
@@ -372,6 +372,12 @@
 
   <div id="app" hidden>
    <div id="view-invoices">
+    <section class="card" id="unfinished-card" hidden>
+      <h2>Not yet accepted</h2>
+      <p class="muted">Invoices read but not accepted, and what each is waiting for. A line marked <b>Needs a new item</b> waits for someone who can add stock items to create it.</p>
+      <div class="recent-list" id="unfinished"></div>
+    </section>
+
     <section class="card" id="capture">
       <h2>1. The invoice</h2>
       <div class="row">
@@ -406,7 +412,7 @@
 
     <section class="card" id="lines-card" hidden>
       <h2>3. Decide every line</h2>
-      <p class="muted" id="lines-help">Lines the tool matched cleanly are accepted with the invoice. Lines marked <b>Needs review</b> need a decision first: accept the suggestion, change it, mark it as not stock, or create a new item. Use <b>Reallocate</b> on any line that is really another camp's goods.</p>
+      <p class="muted" id="lines-help">Lines the tool matched cleanly are accepted with the invoice. Lines marked <b>Needs review</b> need a decision first: accept the suggestion, change it, mark it as not stock, or create a new item. If the item isn't on the stock list and you can't add it, use <b>Needs a new item</b>: the invoice is kept under <b>Not yet accepted</b> until someone adds it. Use <b>Reallocate</b> on any line that is really another camp's goods.</p>
       <div class="filters" id="filters">
         <button type="button" class="secondary small" data-filter="all" aria-pressed="true">All lines</button>
         <button type="button" class="secondary small" data-filter="review" aria-pressed="false">Needs review</button>
@@ -2513,7 +2519,24 @@ document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click
 
 // --- Recent reads -----------------------------------------------------------
 
+// Invoices not yet accepted, with what each waits for (Nicola, 2026-11-17).
+async function loadUnfinished() {
+  try {
+    const { invoices } = await api("unfinished_invoices");
+    $("unfinished-card").hidden = !invoices.length;
+    $("unfinished").innerHTML = invoices.map((i) => {
+      const when = new Date(i.captured_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      const state = i.new_items ? `<span class="chip review">${i.new_items} need${i.new_items > 1 ? "" : "s"} a new item</span>`
+        : i.to_decide ? `<span class="chip review">${i.to_decide} to decide</span>` : `<span class="chip confirmed">Ready to accept</span>`;
+      return `<button type="button" class="secondary" data-open="${i.id}">
+        ${i.is_credit_note ? "<b>Credit note</b> · " : ""}${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
+        <span class="muted"> · read by ${esc(i.capturer?.name || "unknown")} ${when}</span> ${state}</button>`;
+    }).join("");
+  } catch { $("unfinished-card").hidden = true; }
+}
+
 async function loadRecent() {
+  loadUnfinished();
   try {
     const { invoices } = await api("invoices");
     if (!invoices.length) { $("recent").innerHTML = `<span class="muted">No invoices read yet.</span>`; return; }
@@ -2529,7 +2552,7 @@ async function loadRecent() {
   }
 }
 
-$("recent").addEventListener("click", async (ev) => {
+const openListed = async (ev) => {
   const btn = ev.target.closest("[data-open]");
   if (!btn || busy) return;
   clearError();
@@ -2539,7 +2562,9 @@ $("recent").addEventListener("click", async (ev) => {
     setStatus("");
     $("result").scrollIntoView({ behavior: "smooth" });
   } catch (e) { setStatus(""); showError(e); }
-});
+};
+$("recent").addEventListener("click", openListed);
+$("unfinished").addEventListener("click", openListed);
 
 // --- Photos ---------------------------------------------------------------
 
@@ -2895,6 +2920,7 @@ function statusChip(l) {
   if (l.match_status === "confirmed") return `<span class="chip confirmed">Confirmed</span>`;
   if (l.match_status === "not_stock") return `<span class="chip notstock">Not stock</span>`;
   if (l.match_status === "matched") return `<span class="chip matched">Matched</span>`;
+  if (l.match_status === "flagged_new") return `<span class="chip review">Needs a new item</span>`;
   return `<span class="chip review">Needs review</span>`;
 }
 
@@ -2907,10 +2933,19 @@ function lineActions(l) {
       <div class="actions">${b("reopen", "Undo")}${l.match_status === "not_stock" ? "" : realloc}</div>`;
   }
   const buttons = [];
+  const creator = session?.person?.can_create_item;
+  // Waiting for a stock item to be created (Nicola, 2026-11-17).
+  if (l.match_status === "flagged_new") {
+    if (creator) buttons.push(b("create", "New item", ""));
+    buttons.push(b("choose", "Change"), b("not_stock", "Not stock"), realloc);
+    return `${creator ? "" : `<div class="muted">Waiting for someone who adds stock items. Change it if you find the item after all.</div>`}
+      <div class="actions">${buttons.join("")}</div>`;
+  }
   if (isOpen(l) && l.matched_stock_item_id) buttons.push(b("accept", "Accept suggestion", ""));
   buttons.push(b("choose", "Change"));
   buttons.push(b("not_stock", "Not stock"));
-  if (isOpen(l) && session?.person?.can_create_item) buttons.push(b("create", "New item"));
+  if (isOpen(l) && creator) buttons.push(b("create", "New item"));
+  if (isOpen(l) && !creator) buttons.push(b("new_item", "Needs a new item"));
   buttons.push(realloc);
   return `<div class="actions">${buttons.join("")}</div>`;
 }
@@ -2969,10 +3004,12 @@ function drawAcceptBar() {
   }
   if (!inv.matched_at) { $("accept-bar").innerHTML = ""; return; }
   const left = current.needs_review_count;
+  const asked = current.lines.filter((l) => l.match_status === "flagged_new").length;
   $("accept-bar").innerHTML = `
     <button type="button" id="accept-invoice" ${left ? "disabled" : ""}>${inv.is_credit_note ? "Accept credit note" : "Accept invoice"}</button>
-    <span class="${left ? "reason" : "muted"}">${left
-      ? `${left} line${left > 1 ? "s" : ""} still need${left > 1 ? "" : "s"} a decision.`
+    <span class="${left ? "reason" : "muted"}">${asked
+      ? `${asked} line${asked > 1 ? "s are" : " is"} waiting for a new stock item${left > asked ? `, and ${left - asked} more still need${left - asked > 1 ? "" : "s"} a decision` : ""}. The invoice is kept under Not yet accepted; come back to it once the item is added.`
+      : left ? `${left} line${left > 1 ? "s" : ""} still need${left > 1 ? "" : "s"} a decision.`
       : inv.is_credit_note ? "Every line is decided. Accepting locks the credit note. Nothing goes into stock; lines marked Take it out of stock now come out."
       : "Every line is decided. Accepting confirms the matched lines in your name and locks the invoice."}</span>`;
 }
@@ -2987,6 +3024,7 @@ $("accept-bar").addEventListener("click", async (ev) => {
   try {
     const out = await api("accept_invoice", { body: { invoice_id: current.invoice.id } });
     render(out);
+    loadUnfinished();
     // Base and CEC: the invoice is the delivery note, so it is already in stock.
     if (cn) {
       $("error").innerHTML = `<div class="notice">Credit note accepted. Nothing went into stock${out.credited_out ? `; ${out.credited_out} line${out.credited_out > 1 ? "s" : ""} taken out of stock` : ""}. It's on the Allocate tab for Dext.</div>`;
@@ -3018,6 +3056,13 @@ $("lines").addEventListener("click", async (ev) => {
     return;
   }
   if (decision === "create") return openCreate(line);
+  if (decision === "new_item") {
+    const note = prompt(`This item isn't on the stock list yet. The invoice is kept under "Not yet accepted" until someone who adds stock items creates it.\n${line.raw_description}${line.raw_size ? " (" + line.raw_size + ")" : ""}\nAnything they should know? (optional)`, "");
+    if (note == null) return;
+    try { render(await api("review_line", { body: { line_id: line.id, decision: "new_item", note: note.trim() } })); loadUnfinished(); }
+    catch (e) { showError(e); }
+    return;
+  }
   b.disabled = true;
   try {
     render(await api("review_line", { body: decision === "unrealloc"
@@ -3224,6 +3269,7 @@ $("cr-go").addEventListener("click", async () => {
       drawStockList();
     } else {
       render(data);
+      loadUnfinished();
     }
   } catch (e) {
     $("create-error").innerHTML = `<div class="error">${esc(e.message)}</div>`;
