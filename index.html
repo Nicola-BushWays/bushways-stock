@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-17c</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-17e</p>
 </header>
 
 <main>
@@ -1231,6 +1231,8 @@ const MAX_SIDE = 2400; // the reader downsamples to a fixed budget anyway; this 
 const SESSION_KEY = "camp_stock_session";
 const CAMP_KEY = "camp_stock_camp";     // localStorage: the camp last chosen for an invoice
 const PAGES_KEY = "camp_stock_pages";   // sessionStorage: invoice photos taken but not yet read
+const RC_OPEN_KEY = "camp_stock_receiving"; // sessionStorage: the load sheet being received
+const rcDraftKey = (id) => `camp_stock_receive_${id}`; // localStorage: counts typed but not yet confirmed
 
 const $ = (id) => document.getElementById(id);
 const photos = [];      // { dataUrl }
@@ -1375,9 +1377,16 @@ function startApp() {
   ensureLocations().then(restorePages).catch(() => showError(new Error(NO_CAMPS + " Reload the page to try again.")));
   if (has("invoices")) loadRecent();
   if (has("stock_list")) loadCreators();
+  // The phone reloaded the page mid-receipt (taking a photo can): go back to it.
+  let open = null;
+  try { open = sessionStorage.getItem(RC_OPEN_KEY); } catch {}
   const first = [...document.querySelectorAll("[data-tab]")].find((b) => !b.hidden);
   if (first) showView(first.dataset.tab);
   else showError(new Error("You haven't been given any part of Stock yet. Ask Nicola to tick it on your staff profile."));
+  if (open && has("receiving", "correct_delivery")) {
+    showView("receive");
+    api("load_sheet", { query: `&id=${open}` }).then(openReceive).catch(() => {});
+  }
 }
 
 // --- Orders from a stock list (D-039) ------------------------------------------
@@ -2507,6 +2516,7 @@ function showView(name) {
   if (name === "loads") refreshLoads();
   if (name === "stock") { drawStockList(); loadRetired(); fillOnHandCamps(); }
   if (name === "receive") loadReceiving();
+  else try { sessionStorage.removeItem(RC_OPEN_KEY); } catch {}
   if (name === "returns") loadReturns();
   if (name === "transfers") loadTransfers();
   if (name === "sheet") openStockSheet();
@@ -3755,7 +3765,7 @@ function drawSheet(data) {
   const rows = [];
   for (const l of data.lines) {
     const it = l.stock_items;
-    const g = it ? `${it.sheet} · ${it.category}` : "Not stock — check off the truck, doesn't go into stock";
+    const g = sheetGroup(l, "check off the truck, doesn't go into stock");
     if (g !== group) { rows.push(`<tr class="group"><td colspan="5">${esc(g)}</td></tr>`); group = g; }
     const adjusted = Number(l.quantity_expected) !== Number(l.quantity_from_invoices);
     const rcv = l.receipt;
@@ -3776,7 +3786,7 @@ function drawSheet(data) {
     ? `<button type="button" id="ls-send" ${data.lines.length ? "" : "disabled"}>Send load sheet</button>
        <button type="button" class="secondary" id="ls-discard">Discard draft</button>
        <span class="muted">Sending locks it. Discarding puts every line back to waiting.</span>`
-    : `<button type="button" id="ls-print">Print load sheet</button><span class="muted">No prices; a tick box and a blank "received" column for camp.</span>`;
+    : `<button type="button" id="ls-excel">Download load sheet (Excel)</button><button type="button" class="secondary" id="ls-print">Print</button><span class="muted">No prices; a tick box and a blank "received" column for camp.</span>`;
   drawPrint(data);
 }
 
@@ -3829,8 +3839,42 @@ $("ls-bar").addEventListener("click", async (ev) => {
       refreshWaitingOnly();
     }
     if (ev.target.id === "ls-print") { drawPrint(sheetOnScreen); window.print(); }
+    if (ev.target.id === "ls-excel") { try { await sheetExcel(sheetOnScreen); } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; } }
   } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 });
+
+// The heading a load sheet line sits under: its stock sheet and category, or
+// for a not-stock line its supplier and invoice, so each invoice's goods are
+// checked off together (Nicola, 2026-11-17). The server sorts them to match.
+function sheetGroup(l, tail) {
+  const it = l.stock_items;
+  if (it) return `${it.sheet} · ${it.category}`;
+  const inv = (l.load_sheet_line_sources || [])[0]?.invoice_lines?.invoices;
+  return `Not stock · ${[inv?.supplier, inv?.invoice_number].filter(Boolean).join(" ") || "no invoice"}${tail ? " — " + tail : ""}`;
+}
+
+// The load sheet as a spreadsheet to print for camp: no prices, a tick column
+// and a blank Received column (Nicola, 2026-11-17: better than a PDF).
+async function sheetExcel(data) {
+  const s = data.load_sheet;
+  const when = s.sent_at ? new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "not sent";
+  await sfSaveWorkbook(`Load sheet ${s.number} ${s.locations?.name || ""}`, (wb) => {
+    const ws = wb.addWorksheet("Load sheet", { pageSetup: { paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+    ws.columns = [{ width: 5 }, { width: 46 }, { width: 12 }, { width: 10 }, { width: 12 }];
+    ws.addRow([`Bush Ways · Load sheet ${s.number} · ${s.locations?.name || ""}`]).font = { bold: true, size: 14 };
+    ws.addRow([`Sent ${when}${s.sender?.name ? " by " + s.sender.name : ""}. Tick each line as it comes off the truck; write what actually arrived if it differs.`]);
+    ws.addRow([]);
+    sfHead(ws.addRow(["✓", "Item", "Size", "Sent", "Received"]));
+    let group = null;
+    for (const l of data.lines) {
+      const it = l.stock_items, g = sheetGroup(l, "");
+      if (g !== group) { ws.addRow(["", g]).font = { bold: true }; group = g; }
+      ws.addRow(["☐", it ? it.name : l.description, it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "", Number(l.quantity_expected), ""]);
+    }
+    ws.addRow([]);
+    ws.addRow(["", "Checked by: ______________________   Date: ____________   Signature: ______________________"]);
+  });
+}
 
 function drawPrint(data) {
   const s = data.load_sheet;
@@ -3839,7 +3883,7 @@ function drawPrint(data) {
   const rows = [];
   for (const l of data.lines) {
     const it = l.stock_items;
-    const g = it ? `${it.sheet} · ${it.category}` : "Not stock — check off the truck";
+    const g = sheetGroup(l, "check off the truck");
     if (g !== group) { rows.push(`<tr class="group"><td colspan="5">${esc(g)}</td></tr>`); group = g; }
     rows.push(`<tr><td class="box">☐</td><td>${esc(it ? it.name : l.description)}</td><td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
       <td class="num">${fmtQty(l.quantity_expected)}</td><td class="num"></td></tr>`);
@@ -3895,8 +3939,8 @@ $("rc-list").addEventListener("click", async (ev) => {
 });
 
 function openReceive(data) {
+  if (receiving?.load_sheet?.id !== data.load_sheet.id) rcPhotos.clear(); // drawn again: keep its photos
   receiving = data;
-  rcPhotos.clear();
   const s = data.load_sheet;
   const done = s.status !== "sent";
   const sentOn = new Date(new Date(s.sent_at).getTime() + 2 * 3600_000).toISOString().slice(0, 10);
@@ -3917,7 +3961,7 @@ function openReceive(data) {
   const rows = [];
   for (const l of data.lines) {
     const it = l.stock_items;
-    const g = it ? `${it.sheet} · ${it.category}` : "Not stock — check it off; it doesn't go into stock";
+    const g = sheetGroup(l, "check it off; it doesn't go into stock");
     if (g !== group) { rows.push(`<tr class="group"><td colspan="5">${esc(g)}</td></tr>`); group = g; }
     const r = l.receipt;
     rows.push(done
@@ -3947,9 +3991,46 @@ function openReceive(data) {
     $("rc-date").value = isoToday() < sentOn ? sentOn : isoToday();
     $("rc-note").value = "";
     receiving.sentOn = sentOn;
+    for (const id of rcPhotos.keys()) if ($("rcp-" + id)) drawRcPhoto(id);
+    rcRestore();
     drawPeriod();
     summarise();
   }
+  try { done ? sessionStorage.removeItem(RC_OPEN_KEY) : sessionStorage.setItem(RC_OPEN_KEY, s.id); } catch {}
+  if (done) try { localStorage.removeItem(rcDraftKey(s.id)); } catch {}
+}
+
+// What has been typed is kept until it's confirmed, so a phone reloading the
+// page while the camera is open, or the screen being drawn again after
+// adding an extra, loses nothing (Nicola, 2026-11-17, receiving at MTC).
+// Photos are kept too when there's room; otherwise only the typing.
+function rcSave() {
+  if (!receiving || receiving.load_sheet.status !== "sent") return;
+  const lines = {};
+  for (const l of receiving.lines) {
+    const q = $("rcq-" + l.id)?.value || "", d = !!$("rcd-" + l.id)?.checked, dq = $("rcdq-" + l.id)?.value || "", n = $("rcn-" + l.id)?.value || "";
+    if (q || d || dq || n) lines[l.id] = { q, d, dq, n };
+  }
+  const draft = { lines, date: $("rc-date").value, note: $("rc-note").value, photos: Object.fromEntries(rcPhotos) };
+  const key = rcDraftKey(receiving.load_sheet.id);
+  try { localStorage.setItem(key, JSON.stringify(draft)); }
+  catch { try { localStorage.setItem(key, JSON.stringify({ ...draft, photos: {} })); } catch {} }
+}
+function rcRestore() {
+  let draft = null;
+  try { draft = JSON.parse(localStorage.getItem(rcDraftKey(receiving.load_sheet.id)) || "null"); } catch {}
+  if (!draft) return;
+  for (const [id, v] of Object.entries(draft.lines || {})) {
+    if (!$("rcq-" + id)) continue;
+    $("rcq-" + id).value = v.q || "";
+    $("rcd-" + id).checked = !!v.d;
+    $("rcdx-" + id).hidden = !v.d;
+    $("rcdq-" + id).value = v.dq || "";
+    $("rcn-" + id).value = v.n || "";
+  }
+  for (const [id, url] of Object.entries(draft.photos || {})) if ($("rcp-" + id)) { rcPhotos.set(id, url); drawRcPhoto(id); }
+  if (draft.date && draft.date >= $("rc-date").min && draft.date <= $("rc-date").max) $("rc-date").value = draft.date;
+  $("rc-note").value = draft.note || "";
 }
 
 function drawPeriod() {
@@ -3962,7 +4043,8 @@ function drawPeriod() {
       <option value="${rec.slice(0, 7)}-01">${monthName(rec.slice(0, 7) + "-01")} — the month it arrived</option>`;
   }
 }
-$("rc-date").addEventListener("change", drawPeriod);
+$("rc-date").addEventListener("change", () => { drawPeriod(); rcSave(); });
+$("rc-note").addEventListener("input", rcSave);
 
 function summarise() {
   if (!receiving) return;
@@ -3982,20 +4064,22 @@ function summarise() {
 $("rc-all").addEventListener("click", () => {
   for (const l of receiving.lines) { const i = $("rcq-" + l.id); if (i && !i.value.trim()) i.value = fmtQty(l.quantity_expected).replace(/,/g, ""); }
   summarise();
+  rcSave();
 });
-$("rc-lines").addEventListener("input", summarise);
+$("rc-lines").addEventListener("input", () => { summarise(); rcSave(); });
 $("rc-lines").addEventListener("change", (ev) => {
   const d = ev.target.closest("[data-damage]");
   if (d) { $("rcdx-" + d.dataset.damage).hidden = !d.checked; summarise(); }
+  rcSave();
 });
 $("rc-lines").addEventListener("click", (ev) => {
   const ph = ev.target.closest("[data-photo-for]");
   if (ph) {
     const id = ph.dataset.photoFor;
-    pickPhoto(ph.dataset.camera === "1", false, async (files) => { rcPhotos.set(id, await shrink(files[0])); drawRcPhoto(id); });
+    pickPhoto(ph.dataset.camera === "1", false, async (files) => { rcPhotos.set(id, await shrink(files[0])); drawRcPhoto(id); rcSave(); });
   }
   const rm = ev.target.closest("[data-photo-remove]");
-  if (rm) { rcPhotos.delete(rm.dataset.photoRemove); drawRcPhoto(rm.dataset.photoRemove); }
+  if (rm) { rcPhotos.delete(rm.dataset.photoRemove); drawRcPhoto(rm.dataset.photoRemove); rcSave(); }
   const co = ev.target.closest("[data-correct]");
   if (co) openCorrect(co.dataset.correct);
   const u = ev.target.closest("[data-photo-url]");
