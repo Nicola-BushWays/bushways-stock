@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-17b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-17c</p>
 </header>
 
 <main>
@@ -2772,11 +2772,18 @@ function drawTripBox() {
   const toBase = t ? current.lines.filter((l) => l.matched_stock_item_id && kept.has(l.matched_stock_item_id)) : [];
   const toTrip = t ? current.lines.length - toBase.length : 0;
   const tripLabel = (x) => `${x.code} · ${sfDate(x.start_date)}–${sfDate(x.end_date)}`;
+  // A line's trip is its own, else the invoice's (D-042).
+  const codeOf = (id) => id === t?.id ? t.code : (current.line_trips || []).find((x) => x.id === id)?.code || "another trip";
+  const lineTrip = (l) => l.safari_departure_id || t?.id;
+  const several = t && (tripSeveral === inv.id || current.lines.some((l) => l.safari_departure_id));
+  const byTrip = (ls) => { const m = new Map(); for (const l of ls) m.set(lineTrip(l), (m.get(lineTrip(l)) || 0) + 1); return [...m].map(([id, n]) => `<b>${esc(codeOf(id))}</b> ${n} line${n === 1 ? "" : "s"}`).join(", "); };
   let pick;
   if (locked()) {
     if (!t) { box.innerHTML = ""; return; }
-    const charged = current.lines.filter((l) => l.trip_charge).length;
-    pick = `<div>Bought for <b>${esc(t.code)}</b>: ${charged} line${charged === 1 ? "" : "s"} charged to the trip${toBase.length ? `; ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} into Base stock` : ""}.</div>`;
+    const charged = current.lines.filter((l) => l.trip_charge);
+    pick = several
+      ? `<div>Bought for several trips: ${byTrip(charged)}${toBase.length ? `; ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} into Base stock` : ""}.</div>`
+      : `<div>Bought for <b>${esc(t.code)}</b>: ${charged.length} line${charged.length === 1 ? "" : "s"} charged to the trip${toBase.length ? `; ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} into Base stock` : ""}.</div>`;
   } else {
     if (!tripChoices) api("safari_trips").then((r) => { tripChoices = r.trips; if (current?.invoice?.id === inv.id) drawTripBox(); }).catch(() => {});
     const list = (tripChoices || []).filter((x) => !t || x.departure_id !== t.id);
@@ -2784,16 +2791,47 @@ function drawTripBox() {
       <select id="trip-pick" style="width:100%"><option value="">${tripChoices ? "No, not for a trip" : "Loading trips…"}</option>
         ${t ? `<option value="${t.id}" selected>${esc(tripLabel(t))}</option>` : ""}
         ${list.map((x) => `<option value="${x.departure_id}">${esc(tripLabel(x))}</option>`).join("")}</select>
-      ${t ? `<div class="muted" style="margin-top:6px">On accepting, ${toTrip} line${toTrip === 1 ? " is" : "s are"} charged to ${esc(t.code)} and never go${toTrip === 1 ? "es" : ""} into Base stock.${toBase.length ? ` ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} go${toBase.length === 1 ? "es" : ""} into Base stock, as Base keeps ${toBase.length === 1 ? "it" : "them"} for trips.` : ""}</div>` : ""}`;
+      ${t ? `<div class="muted" style="margin-top:6px">On accepting, ${toTrip} line${toTrip === 1 ? " is" : "s are"} charged to ${several ? "their trips" : esc(t.code)} and never go${toTrip === 1 ? "es" : ""} into Base stock.${toBase.length ? ` ${toBase.map((l) => esc(l.stock_items?.name || "")).join(", ")} go${toBase.length === 1 ? "es" : ""} into Base stock, as Base keeps ${toBase.length === 1 ? "it" : "them"} for trips.` : ""}</div>` : ""}`;
+    if (t && !several) pick += `<div class="actions" style="margin-top:8px"><button type="button" class="secondary small" id="trip-several">Several trips on this invoice</button></div>`;
+    if (several) {
+      const keptIds = new Set(toBase.map((l) => l.id));
+      const choices = [t, ...(current.line_trips || []), ...(tripChoices || []).map((x) => ({ id: x.departure_id, code: x.code, start_date: x.start_date, end_date: x.end_date }))]
+        .filter((c, i, all) => all.findIndex((d) => d.id === c.id) === i);
+      const units = (l) => Number(l.handwritten_qty ?? l.printed_qty ?? 0) * Number(l.units_per_pack || 1);
+      pick += `<div style="margin-top:10px"><b>Which trip is each line for?</b> <span class="muted">Each starts on ${esc(t.code)}. Use Split when one line is shared between trips.</span></div>
+        ${current.lines.filter((l) => !keptIds.has(l.id)).map((l) => `<div class="cn-line"><span class="d">${esc(l.stock_items?.name || l.raw_description)} · ${fmtQty(units(l))} · BWP ${money(l.line_total_incl)}</span>
+          <select data-line-trip="${l.id}" aria-label="Trip for this line">${choices.map((c) => `<option value="${c.id}" ${c.id === lineTrip(l) ? "selected" : ""}>${esc(tripLabel(c))}</option>`).join("")}</select>
+          ${units(l) > 1 ? `<button type="button" class="secondary small" data-split-trip="${l.id}">Split</button>` : ""}</div>`).join("")}
+        <div class="muted" style="margin-top:6px">So far: ${byTrip(current.lines.filter((l) => !keptIds.has(l.id)))}.</div>`;
+    }
   }
   const warn = !t && !locked() && current.not_kept_at_base?.length
     ? `<div class="read-warning" style="margin-top:8px">⚠ ${esc(current.not_kept_at_base.join(", "))} ${current.not_kept_at_base.length === 1 ? "isn't" : "aren't"} on Base's stock list. If this invoice was bought for a safari, choose the trip above. Otherwise ${current.not_kept_at_base.length === 1 ? "it goes" : "they go"} into Base stock when you accept.</div>` : "";
   box.innerHTML = `<div class="cn">${pick}${warn}</div>`;
 }
 $("trip-box").addEventListener("change", async (ev) => {
-  if (ev.target.id !== "trip-pick" || busy) return;
+  if (busy) return;
+  const lineId = ev.target.dataset.lineTrip;
+  if (ev.target.id !== "trip-pick" && !lineId) return;
   clearError();
-  try { render(await api("set_invoice_trip", { body: { invoice_id: current.invoice.id, departure_id: ev.target.value || null } })); } catch (e) { showError(e); drawTripBox(); }
+  try {
+    render(await (lineId ? api("set_line_trip", { body: { line_id: lineId, departure_id: ev.target.value } })
+      : api("set_invoice_trip", { body: { invoice_id: current.invoice.id, departure_id: ev.target.value || null } })));
+  } catch (e) { showError(e); drawTripBox(); }
+});
+// Several trips on one invoice (D-042).
+let tripSeveral = null; // the invoice "Several trips" was opened on
+$("trip-box").addEventListener("click", async (ev) => {
+  if (busy) return;
+  if (ev.target.id === "trip-several") { tripSeveral = current.invoice.id; drawTripBox(); return; }
+  const id = ev.target.closest("[data-split-trip]")?.dataset.splitTrip;
+  if (!id) return;
+  const l = current.lines.find((x) => x.id === id);
+  const all = Number(l.handwritten_qty ?? l.printed_qty ?? 0) * Number(l.units_per_pack || 1);
+  const v = prompt(`${l.raw_description}\nThere are ${fmtQty(all)}. How many of them are for another trip? They become a line of their own, and you choose its trip.`, "");
+  if (v == null || !v.trim()) return;
+  clearError();
+  try { render(await api("split_trip_line", { body: { line_id: id, units: numText(v) } })); } catch (e) { showError(e); }
 });
 
 // --- Credit notes (D-032) -----------------------------------------------------
@@ -2989,6 +3027,7 @@ function drawLines() {
         ${changed ? `<div class="muted">The tool had suggested ${esc(l.proposed?.name || "")}${l.proposed?.standard_size ? " · " + esc(l.proposed.standard_size) : ""}</div>` : ""}
         ${isOpen(l) && l.review_reason ? `<div class="reason">${esc(l.review_reason)}</div>` : ""}
         ${l.destination_location_id ? `<div class="dest" title="Reallocated by ${esc(l.reallocator?.name || "")}">→ for ${esc(l.destination?.name || "another camp")}</div>` : ""}
+        ${l.safari_departure_id ? `<div class="dest">→ for ${esc((current.line_trips || []).find((x) => x.id === l.safari_departure_id)?.code || "another trip")}</div>` : ""}
         ${lineActions(l)}</td>
       <td>${statusChip(l)}</td>
     </tr>`;
