@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-17e</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-18a</p>
 </header>
 
 <main>
@@ -1180,6 +1180,7 @@
     <div class="field">
       <label for="cr-category">Category</label>
       <select id="cr-category"></select>
+      <input type="text" id="cr-category-new" autocomplete="off" placeholder="New category name, e.g. OTHER" style="margin-top:6px" hidden>
     </div>
     <div class="field">
       <label for="cr-name">Name</label>
@@ -3185,8 +3186,9 @@ $("choose-list").addEventListener("click", async (ev) => {
   } catch (e) { $("choose-list").insertAdjacentHTML("afterbegin", `<div class="error">${esc(e.message)}</div>`); b.disabled = false; }
 });
 
-// Create: sheet and category come from the catalogue (never coined here),
-// the name is checked against the naming rule as it's typed, and the
+// Create: the sheet comes from the catalogue; the category is one of the
+// sheet's or a new one (Nicola, 2026-11-18: an item on Meat and Dairy fitted
+// no category, and she needed OTHER while creating it). The name is checked against the naming rule as it's typed, and the
 // server checks it all again.
 // line is null when creating straight from the Stock list (no invoice).
 async function openCreate(line) {
@@ -3226,7 +3228,7 @@ async function suggestName() {
   const line = activeLine;
   $("cr-suggest").innerHTML = `<span class="spinner"></span><span class="muted">Finding the most likely name…</span>`;
   try {
-    const s = await api("suggest_item_name", { body: { line_id: line.id, sheet: $("cr-sheet").value, category: $("cr-category").value } });
+    const s = await api("suggest_item_name", { body: { line_id: line.id, sheet: $("cr-sheet").value, category: crCategory() } });
     if (mine !== suggestSeq || activeLine !== line) return;
     const typed = $("cr-name").value.trim();
     if (s.name && (!typed || typed === $("cr-name").dataset.suggested)) {
@@ -3253,13 +3255,21 @@ $("cr-suggest").addEventListener("click", (ev) => {
 });
 function fillCategories(preferred) {
   const cats = [...new Set(catalogue.filter((i) => i.sheet === $("cr-sheet").value).map((i) => i.category))].sort();
-  $("cr-category").innerHTML = cats.map((c) => `<option ${c === preferred ? "selected" : ""}>${esc(c)}</option>`).join("");
+  $("cr-category").innerHTML = cats.map((c) => `<option ${c === preferred ? "selected" : ""}>${esc(c)}</option>`).join("") + `<option value="__new">+ New category…</option>`;
+  $("cr-category-new").value = "";
+  $("cr-category-new").hidden = true;
   showSimilar();
 }
-$("cr-sheet").addEventListener("change", () => fillCategories());
-$("cr-category").addEventListener("change", showSimilar);
+const crCategory = () => $("cr-category").value === "__new" ? $("cr-category-new").value.trim() : $("cr-category").value;
+$("cr-sheet").addEventListener("change", () => { fillCategories(); checkName(); });
+$("cr-category").addEventListener("change", () => {
+  $("cr-category-new").hidden = $("cr-category").value !== "__new";
+  if (!$("cr-category-new").hidden) $("cr-category-new").focus();
+  showSimilar(); checkName();
+});
+$("cr-category-new").addEventListener("input", checkName);
 function showSimilar() {
-  const names = catalogue.filter((i) => i.sheet === $("cr-sheet").value && i.category === $("cr-category").value)
+  const names = catalogue.filter((i) => i.sheet === $("cr-sheet").value && i.category === crCategory())
     .map((i) => i.name + (i.standard_size ? " " + i.standard_size : ""));
   $("cr-similar").innerHTML = names.length ? `Already in this category: ${esc(names.join(", "))}` : "";
 }
@@ -3292,7 +3302,7 @@ function nameFeedback(name, hintId) {
   return !!name && !problem;
 }
 function checkName() {
-  $("cr-go").disabled = !nameFeedback($("cr-name").value.trim(), "cr-name-hint");
+  $("cr-go").disabled = !nameFeedback($("cr-name").value.trim(), "cr-name-hint") || !crCategory();
 }
 $("cr-name").addEventListener("input", checkName);
 $("cr-go").addEventListener("click", async () => {
@@ -3304,7 +3314,7 @@ $("cr-go").addEventListener("click", async () => {
       line_id: standalone ? null : activeLine.id,
       location_ids: standalone ? [...document.querySelectorAll("#cr-camps input:checked")].map((c) => c.value) : undefined,
       sheet: $("cr-sheet").value,
-      category: $("cr-category").value,
+      category: crCategory(),
       name: $("cr-name").value.trim(),
       item_type: $("cr-type").value,
       standard_size: $("cr-size").value.trim(),
