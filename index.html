@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-18a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-18b</p>
 </header>
 
 <main>
@@ -1050,6 +1050,11 @@
         <label for="rn-vat">VAT</label>
         <select id="rn-vat"><option value="14">14% — standard</option><option value="0">0% — zero-rated (BURS foodstuffs list)</option></select>
         <div class="hint">Used to value stock excluding VAT.</div>
+      </div>
+      <div class="field">
+        <label>On the stock list at</label>
+        <div id="rn-camps" class="muted">Loading…</div>
+        <div class="hint" id="rn-camps-hint"></div>
       </div>
     </div>
     <div class="field">
@@ -3381,13 +3386,41 @@ async function openRename(id, editing) {
   $("rn-vat").value = String(renaming.vat_rate ?? 14);
   $("rn-sheet").value = renaming.sheet;
   fillRnCategories(renaming.category);
+  rnCampsWere = null;
+  $("rn-camps").innerHTML = "Loading…";
+  $("rn-camps-hint").textContent = "";
   checkRename();
   $("rn-history").textContent = "Loading…";
   openModal("rename-modal");
   if (editing) $("rn-name").focus();
-  try { drawHistory(await api("item_history", { query: `&id=${id}` })); }
-  catch (e) { $("rn-history").textContent = e.message; }
+  try {
+    const [h] = await Promise.all([api("item_history", { query: `&id=${id}` }), ensureLocations()]);
+    drawHistory(h);
+    if (editing) drawRnCamps(h.location_ids);
+  }
+  catch (e) { $("rn-history").textContent = e.message; $("rn-camps").textContent = NO_CAMPS; }
 }
+// The camps the item is on the stock list at (Nicola, 2026-11-18). Sent with
+// Save only once loaded, so a failed load never wipes the list. A Base-only
+// item is hidden from camps: ticking one says that it stops being Base only.
+let rnCampsWere = null;
+function drawRnCamps(ids) {
+  rnCampsWere = [...ids].sort().join(",");
+  $("rn-camps").innerHTML = locations.map((l) =>
+    `<label style="display:inline-flex;gap:4px;align-items:center;font-weight:400;margin-right:10px"><input type="checkbox" value="${l.id}" ${ids.includes(l.id) ? "checked" : ""}> ${esc(l.name)}</label>`).join("");
+  rnCampsHint();
+}
+// A place not shown as a box (Bush Ways Safaris is left out, D-036) is kept.
+const rnCamps = () => [...document.querySelectorAll("#rn-camps input:checked")].map((c) => c.value)
+  .concat((rnCampsWere || "").split(",").filter((id) => id && !locations.some((l) => l.id === id)));
+function rnCampsHint() {
+  const camp = rnCamps().some((id) => !BASE_SIDE.has(id));
+  $("rn-camps-hint").className = renaming?.base_only && camp ? "hint bad" : "hint";
+  $("rn-camps-hint").textContent = !renaming?.base_only ? "Camps that stock it now. Any camp can still receive it."
+    : camp ? "This item is Base only. Saving with a camp ticked makes it available to camps too."
+    : "Base only: hidden from camps. Tick a camp to make it available there.";
+}
+$("rn-camps").addEventListener("change", () => { rnCampsHint(); checkRename(); });
 function drawHistory({ history, confirmed_lines }) {
   const when = (t) => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
   $("rn-history").innerHTML = (history.length
@@ -3398,6 +3431,8 @@ function drawHistory({ history, confirmed_lines }) {
         if (h.what === "deleted") return `<div>Deleted: ${esc(h.to)} ${by}</div>`;
         if (h.what === "restored") return `<div>Restored ${by}</div>`;
         if (h.what === "VAT rate") return `<div>VAT: ${esc(h.from)} → ${esc(h.to)} ${by}</div>`;
+        if (h.what === "camps") return `<div>On the stock list at: ${esc(h.from)} → ${esc(h.to)} ${by}</div>`;
+        if (h.what === "Base only") return `<div>Base only lifted: available to camps ${by}</div>`;
         if (h.what === "sheet" || h.what === "category") return `<div>${h.what === "sheet" ? "Sheet" : "Category"}: “${esc(h.from)}” → “${esc(h.to)}” ${by}</div>`;
         return `<div>${h.what === "name" ? "Name" : "Pack size"}: “${esc(h.from ?? "none")}” → “${esc(h.to ?? "none")}” ${by}</div>`;
       }).join("")
@@ -3420,7 +3455,8 @@ $("rn-category-new").addEventListener("input", () => checkRename());
 function checkRename() {
   const name = $("rn-name").value.trim();
   const size = $("rn-size").value.trim();
-  const unchanged = name === renaming?.name && size === (renaming?.standard_size || "") && $("rn-vat").value === String(renaming?.vat_rate ?? 14) && $("rn-sheet").value === renaming?.sheet && rnCategory() === renaming?.category;
+  const campsSame = rnCampsWere === null || rnCamps().sort().join(",") === rnCampsWere;
+  const unchanged = name === renaming?.name && size === (renaming?.standard_size || "") && $("rn-vat").value === String(renaming?.vat_rate ?? 14) && $("rn-sheet").value === renaming?.sheet && rnCategory() === renaming?.category && campsSame;
   $("rn-go").disabled = !nameFeedback(name, "rn-hint") || unchanged || !rnCategory();
 }
 $("rn-name").addEventListener("input", checkRename);
@@ -3430,13 +3466,15 @@ $("rn-go").addEventListener("click", async () => {
   $("rename-error").innerHTML = "";
   $("rn-go").disabled = true;
   try {
-    const data = await api("edit_item", { body: { stock_item_id: renaming.id, name: $("rn-name").value.trim(), standard_size: $("rn-size").value.trim(), vat_rate: Number($("rn-vat").value), sheet: $("rn-sheet").value, category: rnCategory() } });
+    const data = await api("edit_item", { body: { stock_item_id: renaming.id, name: $("rn-name").value.trim(), standard_size: $("rn-size").value.trim(), vat_rate: Number($("rn-vat").value), sheet: $("rn-sheet").value, category: rnCategory(), ...(rnCampsWere === null ? {} : { location_ids: rnCamps() }) } });
     renaming.name = data.item.name;          // the cached catalogue row, so the list shows it at once
     renaming.standard_size = data.item.standard_size;
     renaming.vat_rate = data.item.vat_rate;
     renaming.sheet = data.item.sheet;
     renaming.category = data.item.category;
+    renaming.base_only = data.item.base_only;
     fillRnCategories(renaming.category);
+    if (rnCampsWere !== null) drawRnCamps(data.location_ids);
     $("rename-item").innerHTML = `${esc(renaming.name)}${renaming.standard_size ? " · " + esc(renaming.standard_size) : ""} · ${esc(renaming.sheet)} / ${esc(renaming.category)}`;
     drawHistory(data);
     drawStockList();
