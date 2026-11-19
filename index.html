@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-18b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-19a</p>
 </header>
 
 <main>
@@ -828,6 +828,7 @@
           <select id="ls-camp"></select>
         </div>
         <div><button type="button" id="ls-build" disabled>Build load sheet</button></div>
+        <div><button type="button" class="secondary" id="ls-hand" hidden>Add a not-stock item (no invoice)</button></div>
       </div>
       <div class="status" id="ls-waiting"></div>
       <div id="ls-pick"></div>
@@ -890,6 +891,32 @@
     <div class="buttons">
       <button type="button" class="secondary" data-close>Cancel</button>
       <button type="button" id="adj-go">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- A not-stock line with no invoice, added to the load sheet by hand -->
+<div class="modal-back" id="hand-modal">
+  <div class="modal">
+    <h3>Add a not-stock item</h3>
+    <div class="muted" id="hand-camp"></div>
+    <p class="muted">For last-minute additions with no invoice to hand. Camp checks it off the truck; it never goes into stock. A stock item from Base goes as a transfer instead.</p>
+    <div class="field">
+      <label for="hand-what">What is it?</label>
+      <input type="text" id="hand-what" autocomplete="off" placeholder="e.g. Tomatoes - 5kg box">
+    </div>
+    <div class="field">
+      <label for="hand-qty">How many on the truck</label>
+      <input type="text" id="hand-qty" inputmode="decimal" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="hand-from">Where it came from (if known)</label>
+      <input type="text" id="hand-from" autocomplete="off" placeholder="e.g. Spar, Maun market">
+    </div>
+    <div id="hand-error"></div>
+    <div class="buttons">
+      <button type="button" class="secondary" data-close>Cancel</button>
+      <button type="button" id="hand-go">Add to load sheet</button>
     </div>
   </div>
 </div>
@@ -3645,6 +3672,7 @@ function drawWaiting() {
     ? `${n} accepted line${n > 1 ? "s" : ""} waiting for this camp.${draft ? ` They'll be added to draft load sheet ${draft.number}.` : ""}`
     : `Nothing waiting for this camp.${draft ? ` Draft load sheet ${draft.number} is open below.` : ""}`;
   $("ls-build").disabled = !n;
+  $("ls-hand").hidden = !loc || RECEIVE_ON_ACCEPT_AT.has(loc);
   // Base, Safaris and CEC need no load sheet (D-031): their invoices go
   // straight into stock. Anything still waiting was accepted before that.
   const direct = RECEIVE_ON_ACCEPT_AT.has(loc);
@@ -3760,6 +3788,27 @@ $("ls-build").addEventListener("click", async () => {
   } catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; drawWaiting(); }
 });
 
+// A not-stock item with no invoice (Nicola, 2026-11-19): goes on the camp's
+// draft, starting one if needed.
+$("ls-hand").addEventListener("click", () => {
+  $("hand-camp").textContent = `For ${$("ls-camp").selectedOptions[0]?.text || ""}`;
+  for (const id of ["hand-what", "hand-qty", "hand-from"]) $(id).value = "";
+  $("hand-error").innerHTML = "";
+  openModal("hand-modal");
+  $("hand-what").focus();
+});
+$("hand-go").addEventListener("click", async () => {
+  $("hand-error").innerHTML = "";
+  $("hand-go").disabled = true;
+  try {
+    drawSheet(await api("add_hand_line", { body: { location_id: $("ls-camp").value, description: $("hand-what").value.trim(), quantity: $("hand-qty").value.trim(), added_from: $("hand-from").value.trim() } }));
+    closeModals();
+    refreshWaitingOnly();
+    $("ls-card").scrollIntoView({ behavior: "smooth" });
+  } catch (e) { $("hand-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { $("hand-go").disabled = false; }
+});
+
 async function loadRecentSheets() {
   try {
     const { load_sheets } = await api("load_sheets");
@@ -3822,11 +3871,11 @@ function drawSheet(data) {
       <td><b>${esc(it ? it.name : l.description)}</b>${rcvNote}</td>
       <td>${esc(it?.item_type === "variable_weight" ? "kg" : it?.standard_size || "")}</td>
       <td class="num"><b>${fmtQty(l.quantity_expected)}</b>${adjusted ? `<div class="adj">invoices: ${fmtQty(l.quantity_from_invoices)}</div>` : ""}</td>
-      <td class="muted">${sourceText(l)}${adjusted ? `<div class="adj">${esc(l.adjust_note || "")} — ${esc(l.adjuster?.name || "")}</div>` : ""}</td>
+      <td class="muted">${l.added_at ? `No invoice${l.added_from ? " · from " + esc(l.added_from) : ""} · added by ${esc(l.adder?.name || "")}` : sourceText(l)}${adjusted ? `<div class="adj">${esc(l.adjust_note || "")} — ${esc(l.adjuster?.name || "")}</div>` : ""}</td>
       <td>${draft ? `<span class="actions" style="margin:0">
         <button type="button" class="secondary small" data-adjust="${l.id}">Adjust</button>
-        <button type="button" class="secondary small" data-hold="${l.id}">Hold back</button>
-        <button type="button" class="secondary small" data-move-sheet="${l.id}">Move</button></span>` : ""}</td>
+        <button type="button" class="secondary small" data-hold="${l.id}">${l.added_at ? "Remove" : "Hold back"}</button>
+        ${l.added_at ? "" : `<button type="button" class="secondary small" data-move-sheet="${l.id}">Move</button>`}</span>` : ""}</td>
     </tr>`);
   }
   $("ls-lines").innerHTML = rows.join("") || `<tr><td colspan="5" class="muted">No lines.</td></tr>`;
@@ -3850,12 +3899,14 @@ $("ls-lines").addEventListener("click", async (ev) => {
     $("adjust-line").textContent = activeLine.stock_items?.name || activeLine.description;
     $("adj-qty").value = fmtQty(activeLine.quantity_expected).replace(/,/g, "");
     $("adj-note").value = activeLine.adjust_note || "";
+    $("adj-note").closest(".field").hidden = !!activeLine.added_at; // added by hand: no invoice to differ from
     $("adjust-error").innerHTML = "";
     openModal("adjust-modal");
     $("adj-qty").focus();
   }
   if (hold) {
-    if (!confirm("Take this line off the truck? It keeps waiting, unticked, until you choose it for a later load sheet.")) return;
+    const byHand = sheetOnScreen.lines.find((l) => l.id === hold.dataset.hold)?.added_at;
+    if (!confirm(byHand ? "Remove this item from the load sheet? It was added by hand, so it's gone, not kept waiting." : "Take this line off the truck? It keeps waiting, unticked, until you choose it for a later load sheet.")) return;
     try { drawSheet(await api("hold_back_line", { body: { line_id: hold.dataset.hold } })); refreshWaitingOnly(); }
     catch (e) { $("ls-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
   }
@@ -3897,6 +3948,7 @@ $("ls-bar").addEventListener("click", async (ev) => {
 function sheetGroup(l, tail) {
   const it = l.stock_items;
   if (it) return `${it.sheet} · ${it.category}`;
+  if (l.added_at) return `Not stock · no invoice${l.added_from ? " · " + l.added_from : ""}${tail ? " — " + tail : ""}`;
   const inv = (l.load_sheet_line_sources || [])[0]?.invoice_lines?.invoices;
   return `Not stock · ${[inv?.supplier, inv?.invoice_number].filter(Boolean).join(" ") || "no invoice"}${tail ? " — " + tail : ""}`;
 }
