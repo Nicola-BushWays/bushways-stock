@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-19a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-20b</p>
 </header>
 
 <main>
@@ -2997,7 +2997,17 @@ $("ed-go").addEventListener("click", async () => {
   } catch (e) { $("edit-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 });
 
+// A minus price on an invoice (not a credit note) is a discount on the line
+// above it, the nearest one with a price (D-043). It comes off that item's
+// cost and never goes on a load sheet; the server links it on accepting.
+const isDiscount = (l) => !current?.invoice?.is_credit_note && l.line_total_incl != null && Number(l.line_total_incl) < 0;
+function discountOn(l) {
+  if (l.discount_of_line_id) return current.lines.find((x) => x.id === l.discount_of_line_id);
+  const i = current.lines.indexOf(l);
+  return current.lines.slice(0, i).reverse().find((x) => Number(x.line_total_incl) > 0);
+}
 function statusChip(l) {
+  if (isDiscount(l)) return `<span class="chip notstock">Discount</span>`;
   if (l.match_status === "confirmed") return `<span class="chip confirmed">Confirmed</span>`;
   if (l.match_status === "not_stock") return `<span class="chip notstock">Not stock</span>`;
   if (l.match_status === "matched") return `<span class="chip matched">Matched</span>`;
@@ -3006,6 +3016,12 @@ function statusChip(l) {
 }
 
 function lineActions(l) {
+  if (isDiscount(l)) {
+    const of = discountOn(l);
+    // One read before discounts were recognised may still need its decision.
+    const decide = isOpen(l) && !locked() ? `<div class="actions"><button type="button" class="secondary small" data-line="${l.id}" data-decision="not_stock">Mark as discount</button></div>` : "";
+    return `<div class="muted">${of ? `Comes off “${esc(of.stock_items?.name || of.raw_description || "the line above")}”` : "No line above it to come off"}. Not on the load sheet.</div>${decide}`;
+  }
   if (locked()) return "";
   const b = (decision, label, cls = "secondary") => `<button type="button" class="${cls} small" data-line="${l.id}" data-decision="${decision}">${label}</button>`;
   const realloc = l.destination_location_id ? b("unrealloc", `Back to ${esc(current.invoice.locations?.name || "this camp")}`) : b("reallocate", "Reallocate");
@@ -3040,8 +3056,10 @@ function drawLines() {
     const c = l.match_confidence || {};
     const confText = ["sheet", "category", "item"].filter((k) => c[k] != null).map((k) => `${k} ${Math.round(c[k] * 100)}%`).join(" · ");
     const counted = l.handwritten_qty != null && l.handwritten_qty !== l.printed_qty
-      ? `${l.printed_qty ?? "—"} <span class="hand" title="Written by hand on the invoice">✎ ${l.handwritten_qty}</span>`
+      ? `${l.printed_qty ?? "—"} <span class="hand" title="${l.counter ? "Count changed by " + esc(l.counter.name) : "Written by hand on the invoice"}">✎ ${l.handwritten_qty}</span>`
       : (l.printed_qty ?? "—");
+    const countBy = l.counter ? `<div class="adj">count by ${esc(l.counter.name)}</div>` : "";
+    const canCount = !locked() && !current.invoice.is_credit_note && !isDiscount(l);
     // In single units (D-018): a case of 6 counts as 6. An item counted by
     // weight is in kg: 16 packs of 250g is 16 × 0.25 = 4 kg.
     const upp = Number(l.units_per_pack || 1);
@@ -3049,6 +3067,8 @@ function drawLines() {
     const byWeight = item?.item_type === "variable_weight";
     const qty = (byWeight && upp !== 1 ? `${counted} × ${fmtQty(upp)} kg<div class="adj">= ${fmtQty(units)} kg</div>`
         : upp > 1 ? `${counted} × ${upp}<div class="adj">= ${fmtQty(units)} units</div>` : counted)
+      + countBy
+      + (canCount ? `<div><button type="button" class="secondary small" data-line="${l.id}" data-decision="count">Change quantity</button></div>` : "")
       + (!locked() && !l.reviewed_at ? `<div><button type="button" class="secondary small" data-line="${l.id}" data-decision="units">${byWeight ? "Kg per pack" : upp > 1 ? "Change units" : "Units per pack"}</button></div>` : "");
     const unit = l.unit_price_excl != null ? `${money(l.unit_price_excl)} <span class="muted">excl</span>` : l.unit_price_incl != null ? `${money(l.unit_price_incl)} <span class="muted">incl</span>` : "—";
     const changed = l.reviewed_at && l.proposed_stock_item_id && l.proposed_stock_item_id !== l.matched_stock_item_id;
@@ -3068,7 +3088,7 @@ function drawLines() {
         ${(l.size_status || "").startsWith("within tolerance") && !l.reviewed_at ? `<div class="tol">Size ${esc(l.size_status.replace("within tolerance: ", ""))} — within tolerance</div>` : ""}
         ${confText && !l.reviewed_at ? `<div class="conf">${confText}</div>` : ""}
         ${changed ? `<div class="muted">The tool had suggested ${esc(l.proposed?.name || "")}${l.proposed?.standard_size ? " · " + esc(l.proposed.standard_size) : ""}</div>` : ""}
-        ${isOpen(l) && l.review_reason ? `<div class="reason">${esc(l.review_reason)}</div>` : ""}
+        ${isOpen(l) && l.review_reason && !isDiscount(l) ? `<div class="reason">${esc(l.review_reason)}</div>` : ""}
         ${l.destination_location_id ? `<div class="dest" title="Reallocated by ${esc(l.reallocator?.name || "")}">→ for ${esc(l.destination?.name || "another camp")}</div>` : ""}
         ${l.safari_departure_id ? `<div class="dest">→ for ${esc((current.line_trips || []).find((x) => x.id === l.safari_departure_id)?.code || "another trip")}</div>` : ""}
         ${lineActions(l)}</td>
@@ -3134,6 +3154,13 @@ $("lines").addEventListener("click", async (ev) => {
       : prompt(`How many single units are in one of these?\n${line.raw_description}${line.raw_size ? " (" + line.raw_size + ")" : ""}\nA case of 6 is 6; a single item is 1.`, String(line.units_per_pack || 1));
     if (v == null) return;
     try { render(await api("review_line", { body: { line_id: line.id, decision: "units", units_per_pack: v.trim() } })); }
+    catch (e) { showError(e); }
+    return;
+  }
+  if (decision === "count") {
+    const v = prompt(`How many arrived? Count in the same packs as the invoice (cases, packets), not single units. 0 if none came.\n${line.raw_description}${line.raw_size ? " (" + line.raw_size + ")" : ""}\nThe invoice says ${line.printed_qty ?? "—"}.`, String(line.handwritten_qty ?? line.printed_qty ?? ""));
+    if (v == null) return;
+    try { render(await api("review_line", { body: { line_id: line.id, decision: "count", quantity: v.trim() } })); }
     catch (e) { showError(e); }
     return;
   }
