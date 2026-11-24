@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-20b</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-24a</p>
 </header>
 
 <main>
@@ -2571,9 +2571,12 @@ async function loadUnfinished() {
       const when = new Date(i.captured_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
       const state = i.new_items ? `<span class="chip review">${i.new_items} need${i.new_items > 1 ? "" : "s"} a new item</span>`
         : i.to_decide ? `<span class="chip review">${i.to_decide} to decide</span>` : `<span class="chip confirmed">Ready to accept</span>`;
+      // D-044: sent for checking, or rejected after it was accepted.
+      const flag = i.check_requested_at ? ` <span class="chip review" title="${esc(i.check_note || "")}">Sent for checking by ${esc(i.checker?.name || "")}</span>`
+        : i.rejected_at ? ` <span class="chip review" title="${esc(i.reject_reason || "")}">Rejected by ${esc(i.rejecter?.name || "")}</span>` : "";
       return `<button type="button" class="secondary" data-open="${i.id}">
         ${i.is_credit_note ? "<b>Credit note</b> · " : ""}${esc(i.supplier || "Unknown supplier")} · ${esc(i.invoice_number || "no number")} · ${esc(i.locations?.name || "")}
-        <span class="muted"> · read by ${esc(i.capturer?.name || "unknown")} ${when}</span> ${state}</button>`;
+        <span class="muted"> · read by ${esc(i.capturer?.name || "unknown")} ${when}</span> ${state}${flag}</button>`;
     }).join("");
   } catch { $("unfinished-card").hidden = true; }
 }
@@ -2755,7 +2758,7 @@ function render(data) {
   const inv = data.invoice;
   const r = data.reconciliation;
   const diff = r.checked ? r.difference : null;
-  const adds = r.checked && Math.abs(diff) <= 0.05; // a few thebe of rounding is normal
+  const adds = r.checked && Math.abs(diff) <= 0.5; // up to P 0.50 is rounding (D-044)
   const matched = inv.matched_at != null;
 
   const tiles = [
@@ -2769,6 +2772,7 @@ function render(data) {
   ];
   const checkTile = !r.checked
     ? `<div class="tile warn"><div class="k">Totals check</div><div class="v">No printed total to check against</div></div>`
+    : r.unpriced ? `<div class="tile warn"><div class="k">Totals check</div><div class="v">Can't check: ${r.unpriced} line${r.unpriced > 1 ? "s have" : " has"} no printed total</div></div>`
     : `<div class="tile ${adds ? "ok" : "bad"}"><div class="k">Totals check</div><div class="v">${adds ? "Adds up ✓" : `Out by BWP ${money(diff)}`}</div></div>`;
   const matchTile = !matched
     ? `<div class="tile warn"><div class="k">Matching</div><div class="v">Not matched yet</div></div>`
@@ -3097,18 +3101,36 @@ function drawLines() {
   }).join("") || `<tr><td colspan="8" class="muted">No lines in this view.</td></tr>`;
 }
 
+// Corrections (D-044): accept an invoice whose total is wrong, reject an accepted one.
+const canFixInvoice = () => session?.person?.access?.corrections === "manage";
+const whenText = (t) => new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
 function drawAcceptBar() {
   const inv = current.invoice;
   if (locked()) {
-    const when = new Date(inv.accepted_at).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-    $("accept-bar").innerHTML = `<span><b>Accepted</b> by ${esc(inv.accepter?.name || "")}, ${when}. This invoice is locked.</span>`;
+    $("accept-bar").innerHTML = `<span><b>Accepted</b> by ${esc(inv.accepter?.name || "")}, ${whenText(inv.accepted_at)}. This invoice is locked.`
+      + (inv.override_at ? ` The total didn't add up; accepted anyway by ${esc(inv.overrider?.name || "")}: “${esc(inv.override_reason || "")}”.` : "") + `</span>`
+      + (canFixInvoice() ? ` <button type="button" class="secondary" id="reject-invoice">Reject</button>` : "");
     return;
   }
-  if (!inv.matched_at) { $("accept-bar").innerHTML = ""; return; }
+  const notes = (inv.rejected_at ? `<div class="reason">Rejected by ${esc(inv.rejecter?.name || "")}, ${whenText(inv.rejected_at)}: “${esc(inv.reject_reason || "")}”. Put it right, then accept it again.</div>` : "")
+    + (inv.check_requested_at ? `<div class="reason">Sent for checking by ${esc(inv.checker?.name || "")}, ${whenText(inv.check_requested_at)}: “${esc(inv.check_note || "")}”.</div>` : "");
+  if (!inv.matched_at) { $("accept-bar").innerHTML = notes; return; }
   const left = current.needs_review_count;
   const asked = current.lines.filter((l) => l.match_status === "flagged_new").length;
-  $("accept-bar").innerHTML = `
+  const r = current.reconciliation;
+  if (!left && r.blocks) {
+    const out = `The lines add up to BWP ${money(r.summed_total)} but the invoice total is BWP ${money(r.printed_total)}, out by BWP ${money(r.difference)}.`;
+    $("accept-bar").innerHTML = notes + (canFixInvoice()
+      ? `<button type="button" id="accept-anyway">Accept anyway</button>
+         <span class="reason">${out} Check each line against the photo first. Accepting anyway needs a reason, which is kept.</span>`
+      : `<button type="button" id="send-check">Send for checking</button>
+         <span class="reason">${out} It can't be accepted like this. Check each line against the photo: a missed line, a discount or a wrong price. If you can't find it, send it for checking.</span>`);
+    return;
+  }
+  $("accept-bar").innerHTML = notes + `
     <button type="button" id="accept-invoice" ${left ? "disabled" : ""}>${inv.is_credit_note ? "Accept credit note" : "Accept invoice"}</button>
+    ${inv.check_requested_at ? "" : `<button type="button" class="secondary" id="send-check">Send for checking</button>`}
     <span class="${left ? "reason" : "muted"}">${asked
       ? `${asked} line${asked > 1 ? "s are" : " is"} waiting for a new stock item${left > asked ? `, and ${left - asked} more still need${left - asked > 1 ? "" : "s"} a decision` : ""}. The invoice is kept under Not yet accepted; come back to it once the item is added.`
       : left ? `${left} line${left > 1 ? "s" : ""} still need${left > 1 ? "" : "s"} a decision.`
@@ -3117,7 +3139,25 @@ function drawAcceptBar() {
 }
 
 $("accept-bar").addEventListener("click", async (ev) => {
-  if (ev.target.id !== "accept-invoice" || busy) return;
+  if (busy) return;
+  const id = ev.target.id;
+  if (id === "send-check" || id === "accept-anyway" || id === "reject-invoice") {
+    const ask = id === "send-check" ? "What is wrong with this invoice? Whoever checks it will see your note."
+      : id === "accept-anyway" ? "Why accept it though the total doesn't add up? Your reason is kept on the invoice."
+      : "Why reject it? It goes back to Not yet accepted with your reason, to be put right and accepted again.";
+    const v = prompt(ask, "");
+    if (v == null) return;
+    clearError();
+    try {
+      const out = id === "send-check" ? await api("send_for_checking", { body: { invoice_id: current.invoice.id, note: v.trim() } })
+        : id === "accept-anyway" ? await api("accept_invoice", { body: { invoice_id: current.invoice.id, override_reason: v.trim() } })
+        : await api("reject_invoice", { body: { invoice_id: current.invoice.id, reason: v.trim() } });
+      render(out);
+      loadRecent();
+    } catch (e) { showError(e); }
+    return;
+  }
+  if (id !== "accept-invoice") return;
   const cn = current.invoice.is_credit_note;
   const out_ = cn ? current.lines.filter((l) => l.credit_take_out && l.matched_stock_item_id).length : 0;
   if (!confirm(cn ? `Accept this credit note? It will be locked. Nothing goes into stock${out_ ? `, and ${out_} line${out_ > 1 ? "s" : ""} will come out of stock` : ""}.`
