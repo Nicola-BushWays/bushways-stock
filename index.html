@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-24a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-24c</p>
 </header>
 
 <main>
@@ -434,7 +434,13 @@
     </section>
 
     <section class="card">
-      <h2>Recent reads</h2>
+      <h2 id="recent-title">Recent reads</h2>
+      <form id="inv-search" class="actions" style="margin-bottom:10px">
+        <input type="search" id="inv-search-q" placeholder="Invoice number or supplier, e.g. 131484 or Haskins" style="flex:1;min-width:200px">
+        <select id="inv-search-camp" aria-label="Camp"><option value="">All camps</option></select>
+        <button type="submit">Search</button>
+        <button type="button" class="secondary" id="inv-search-clear" hidden>Show recent</button>
+      </form>
       <div class="recent-list" id="recent"><span class="muted">Loading…</span></div>
     </section>
 
@@ -1337,6 +1343,7 @@ async function loadLocations() {
   if (!locations.some((l) => l.id === last)) last = locations.find((l) => l.name === DEFAULT_CAMP)?.id;
   $("camp").innerHTML = locations.map((l) =>
     `<option value="${l.id}" ${l.id === last ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  $("inv-search-camp").innerHTML = `<option value="">All camps</option>` + locations.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join("");
 }
 
 async function fillPeople(locationSelect, personSelect, placeholder) {
@@ -2583,9 +2590,14 @@ async function loadUnfinished() {
 
 async function loadRecent() {
   loadUnfinished();
+  const q = $("inv-search-q").value.trim();
+  const camp = $("inv-search-camp").value;
+  const searching = !!(q || camp);
+  $("recent-title").textContent = searching ? "Search results" : "Recent reads";
+  $("inv-search-clear").hidden = !searching;
   try {
-    const { invoices } = await api("invoices");
-    if (!invoices.length) { $("recent").innerHTML = `<span class="muted">No invoices read yet.</span>`; return; }
+    const { invoices } = await api("invoices", { query: (q ? `&q=${encodeURIComponent(q)}` : "") + (camp ? `&location_id=${camp}` : "") });
+    if (!invoices.length) { $("recent").innerHTML = `<span class="muted">${searching ? "No invoice matches that." : "No invoices read yet."}</span>`; return; }
     $("recent").innerHTML = invoices.map((i) => {
       const when = new Date(i.captured_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
       const state = i.status === "accepted" ? " · accepted" : i.matched_at ? " · to review" : " · not matched";
@@ -2597,6 +2609,11 @@ async function loadRecent() {
     $("recent").innerHTML = `<span class="muted">Could not load recent reads: ${esc(e.message)}</span>`;
   }
 }
+
+// Search (Nicola, 2026-11-24): part of the number or the supplier.
+$("inv-search").addEventListener("submit", (ev) => { ev.preventDefault(); loadRecent(); });
+$("inv-search-camp").addEventListener("change", () => loadRecent());
+$("inv-search-clear").addEventListener("click", () => { $("inv-search-q").value = ""; $("inv-search-camp").value = ""; loadRecent(); });
 
 const openListed = async (ev) => {
   const btn = ev.target.closest("[data-open]");
