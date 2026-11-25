@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-24c</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-25a</p>
 </header>
 
 <main>
@@ -1266,6 +1266,9 @@ const DEFAULT_CAMP = "Khwai Guest House"; // the first test's camp (tools/camp-s
 // Bush Ways Base and Bush Ways Safaris: the only places a Base-only item goes (D-029).
 const BASE_SIDE = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-3947-4f06-a42c-5291d3cb6597"]);
 const RECEIVE_ALL_AT = new Set(["288db141-cf93-4787-8e86-55c3096acd94", "2c94c415-3947-4f06-a42c-5291d3cb6597", "db83c66c-f559-4a47-ae4d-b70e912d5e4b"]);
+// Nicola gets Receive all at every camp (D-046): she puts in deliveries for
+// camps not yet using the tool. Only the load sheet button, not transfers.
+const RECEIVE_ALL_ANYWHERE = new Set(["6e584d05-9052-492a-8dd4-a1237d79da95"]);
 const MAX_SIDE = 2400; // the reader downsamples to a fixed budget anyway; this keeps the upload small for Maun bandwidth
 const SESSION_KEY = "camp_stock_session";
 const CAMP_KEY = "camp_stock_camp";     // localStorage: the camp last chosen for an invoice
@@ -4133,7 +4136,7 @@ function openReceive(data) {
   $("rc-meta").textContent = done
     ? `Received ${data.receipt?.received_on || ""} by ${data.receipt?.receiver?.name || ""}, booked to ${data.receipt?.stock_period ? monthName(data.receipt.stock_period) : ""} stock.${data.receipt?.note ? " Note: " + data.receipt.note : ""} Got a count wrong? Tap Correct on that line.`
     : `Sent ${new Date(s.sent_at).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} by ${s.sender?.name || ""}.`;
-  $("rc-tools").hidden = done || !RECEIVE_ALL_AT.has(s.location_id);
+  $("rc-tools").hidden = done || !(RECEIVE_ALL_AT.has(s.location_id) || RECEIVE_ALL_ANYWHERE.has(session.person.id));
   $("rc-finish").hidden = done;
   const completed = !!data.receipt?.completed_at;
   $("rc-done-bar").hidden = !done;
