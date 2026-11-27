@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-25a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-27a</p>
 </header>
 
 <main>
@@ -4328,6 +4328,7 @@ function drawExtras() {
     const state = e.status === "waiting" ? `<span class="chip review">Waiting for Base</span>`
       : e.status === "allocated" ? `<span class="chip matched">Put into ${esc(e.allocated?.name || "")} stock</span> <span class="muted">by ${esc(e.decider?.name || "")}</span>`
       : e.status === "returned" ? `<span class="chip notstock">Sent back to Maun</span>`
+      : e.status === "on_invoice" ? `<span class="chip matched">On an invoice: received on this sheet</span> <span class="muted">— ${esc(e.decider?.name || "")}</span>`
       : `<span class="chip return">To be returned to Maun</span> <span class="muted">— ${esc(e.decider?.name || "")}</span>`;
     return `<div class="extra"><span><b>${fmtQty(e.quantity)} × ${what}</b> <span class="muted">· recorded by ${esc(e.recorder?.name || "")}${e.note ? " · " + esc(e.note) : ""} · ${state}</span>
       ${e.photo_url ? `<div><img class="thumb" src="${esc(e.photo_url)}" data-photo-url="${esc(e.photo_url)}" alt="Photo"></div>` : ""}</span>
