@@ -317,7 +317,7 @@
 <header>
   <h1>Stock</h1>
   <p>camp-stock · invoices, load sheets, receiving, returns, transfers, stock sheets and stock takes</p>
-  <p id="page-version" style="font-size:11px">Page version 2026-11-27a</p>
+  <p id="page-version" style="font-size:11px">Page version 2026-11-27b</p>
 </header>
 
 <main>
@@ -4379,6 +4379,7 @@ $("ex-photo").addEventListener("click", (ev) => {
 });
 $("ex-go").addEventListener("click", async () => {
   $("extra-error").innerHTML = "";
+  $("ex-go").disabled = true; // one tap, one record (Sango entered eight twice, 26 Nov)
   try {
     openReceive(await api("add_extra", { body: {
       load_sheet_id: receiving.load_sheet.id, stock_item_id: exPick?.id || null,
@@ -4386,6 +4387,7 @@ $("ex-go").addEventListener("click", async () => {
     } }));
     closeModals();
   } catch (e) { $("extra-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { $("ex-go").disabled = false; }
 });
 
 let deciding = null, dcPick = null;
@@ -4789,11 +4791,13 @@ $("tfm-list").addEventListener("click", (ev) => {
 $("tfm-go").addEventListener("click", async () => {
   $("tfm-error").innerHTML = "";
   if (!tfPick) { $("tfm-error").innerHTML = `<div class="error">Choose the item from the list.</div>`; return; }
+  $("tfm-go").disabled = true;
   try {
     drawTfSheet(await api("add_transfer_line", { body: { from_location_id: $("tf-from").value, to_location_id: $("tf-to").value, stock_item_id: tfPick.id, quantity: numText($("tfm-qty").value) } }));
     closeModals();
     loadTransfers();
   } catch (e) { $("tfm-error").innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+  finally { $("tfm-go").disabled = false; }
 });
 
 function drawTfSheet(data) {
